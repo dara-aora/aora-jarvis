@@ -1,4 +1,7 @@
 node_modules/
+eeg/.venv/
+__pycache__/
+*.pyc
 build/
 dist/
 coverage/

@@ -4,6 +4,9 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 
+const JARVIS_LIVE_MODEL =
+  process.env.GEMINI_LIVE_MODEL || "gemini-2.5-flash-native-audio-preview-12-2025";
+
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
@@ -36,6 +39,88 @@ async function startServer() {
   // API Check Status
   app.get("/api/health", (req, res) => {
     res.json({ status: "healthy", timestamp: new Date().toISOString() });
+  });
+
+  // Ephemeral token for Gemini Live (voice + real-time EEG context)
+  app.post("/api/jarvis/live-token", async (_req, res) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({
+        error: "GEMINI_API_KEY is not configured. Add it to .env to enable live voice.",
+      });
+    }
+
+    try {
+      const expireTime = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      const newSessionExpireTime = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+
+      const authTokens = (ai as { authTokens?: { create: (opts: unknown) => Promise<{ name?: string }> } })
+        ?.authTokens;
+
+      if (authTokens?.create) {
+        const token = await authTokens.create({
+          config: {
+            uses: 1,
+            expireTime,
+            newSessionExpireTime,
+            liveConnectConstraints: {
+              model: JARVIS_LIVE_MODEL,
+              config: { responseModalities: ["AUDIO"] },
+            },
+            httpOptions: { apiVersion: "v1alpha" },
+          },
+        });
+        if (token?.name) {
+          return res.json({ token: token.name, model: JARVIS_LIVE_MODEL, ephemeral: true });
+        }
+      }
+
+      // REST fallback when SDK authTokens helper is unavailable
+      const restRes = await fetch(
+        "https://generativelanguage.googleapis.com/v1alpha/authTokens",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": apiKey,
+          },
+          body: JSON.stringify({
+            config: {
+              uses: 1,
+              expireTime,
+              newSessionExpireTime,
+              liveConnectConstraints: {
+                model: JARVIS_LIVE_MODEL,
+                config: { responseModalities: ["AUDIO"] },
+              },
+            },
+          }),
+        }
+      );
+
+      if (restRes.ok) {
+        const data = (await restRes.json()) as { name?: string };
+        if (data.name) {
+          return res.json({ token: data.name, model: JARVIS_LIVE_MODEL, ephemeral: true });
+        }
+      }
+
+      // Local dev: direct key (never expose in production builds)
+      if (process.env.NODE_ENV !== "production") {
+        console.warn(
+          "[Jarvis Live] Using API key fallback — configure ephemeral tokens for production."
+        );
+        return res.json({ token: apiKey, model: JARVIS_LIVE_MODEL, ephemeral: false });
+      }
+
+      return res.status(502).json({
+        error: "Could not create ephemeral live token. Check GEMINI_API_KEY permissions.",
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Live token error";
+      console.error("[Jarvis Live] token error:", error);
+      res.status(500).json({ error: message });
+    }
   });
 
   // Jarvis Cognitive Reasoning Endpoint

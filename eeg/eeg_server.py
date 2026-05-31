@@ -15,12 +15,14 @@ Key changes vs previous:
 
 import asyncio
 import json
+import os
+import time
 import collections
 import numpy as np
 import websockets
 from scipy.signal import welch, iirnotch, sosfilt, butter, lfilter
 
-from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
+from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds, BrainFlowError
 from fatigue import fatigue_features, FatigueIndex, check_signal_quality
 
 WINDOW_SEC   = 4.0
@@ -471,15 +473,97 @@ async def calibrate(board, sr, ch1_idx, ch2_idx, win_samples):
     await broadcast({"type": "cal_complete"})
     return cal
 
+# ── Ganglion connection ───────────────────────────────────────────────────────
+MAX_CONNECT_ATTEMPTS = 3
+
+class GanglionConnectError(Exception):
+    pass
+
+def _make_ganglion_board(fw_override=None):
+    params = BrainFlowInputParams()
+    fw = (fw_override or os.environ.get("EEG_GANGLION_FW", "")).strip()
+    if fw in ("2", "3", "auto"):
+        params.other_info = f"fw:{fw}"
+    mac = os.environ.get("EEG_GANGLION_MAC", "").strip()
+    if mac:
+        params.mac_address = mac
+    params.timeout = int(os.environ.get("EEG_DISCOVERY_TIMEOUT", "15"))
+    board_id = BoardIds.GANGLION_NATIVE_BOARD.value
+    return BoardShim(board_id, params), board_id
+
+def _release_board(board):
+    try:
+        if board.is_prepared():
+            board.stop_stream()
+    except Exception:
+        pass
+    try:
+        board.release_session()
+    except Exception:
+        pass
+
+def connect_ganglion():
+    """Connect with retries — must run in a thread (blocks on BLE I/O)."""
+    last_err = None
+    fw_options = [os.environ.get("EEG_GANGLION_FW", "").strip() or None]
+    if fw_options[0] is None:
+        fw_options = ["3", "auto", "2"]
+
+    for fw in fw_options:
+        BoardShim.release_all_sessions()
+        board, board_id = _make_ganglion_board(fw)
+        label = f"fw:{fw}" if fw else "default"
+        for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+            try:
+                print(f"Connecting to Ganglion ({label}, attempt {attempt}/{MAX_CONNECT_ATTEMPTS})…")
+                board.prepare_session()
+                time.sleep(2)  # let macOS BLE stack settle after link-up
+                if not board.is_prepared():
+                    raise RuntimeError(
+                        "BLE linked but Ganglion services were not ready "
+                        "(characteristic discovery incomplete)"
+                    )
+                board.start_stream()
+                print("Ganglion streaming.")
+                return board, board_id
+            except (BrainFlowError, RuntimeError) as err:
+                last_err = err
+                print(f"[WARN] {label} attempt {attempt} failed: {err}")
+                _release_board(board)
+                BoardShim.release_all_sessions()
+                if attempt < MAX_CONNECT_ATTEMPTS:
+                    print("Retrying in 3s…")
+                    time.sleep(3)
+                    board, board_id = _make_ganglion_board(fw)
+
+    raise GanglionConnectError(
+        f"Could not connect to Ganglion after {MAX_CONNECT_ATTEMPTS} attempts "
+        f"(tried firmware: {', '.join(fw_options)}).\n"
+        f"Last error: {last_err}\n\n"
+        "Try:\n"
+        "  • Power-cycle the Ganglion (hold power ~3s)\n"
+        "  • Quit OpenBCI GUI or any app already paired with the board\n"
+        "  • System Settings → Privacy → Bluetooth → allow Terminal/Python\n"
+        "  • Older firmware: EEG_GANGLION_FW=2 npm run eeg\n"
+        "  • No hardware: use “Test with mock Ganglion data” in the UI"
+    )
+
+async def _connect_ganglion_with_status():
+    """Non-blocking connect — keeps the WebSocket event loop responsive."""
+    session_state["phase"] = "connecting"
+    await broadcast({"type": "status", "phase": "connecting", "detail": "Searching for Ganglion…"})
+    while True:
+        try:
+            return await asyncio.to_thread(connect_ganglion)
+        except GanglionConnectError as err:
+            msg = str(err)
+            print(f"[ERROR] {msg}")
+            await broadcast({"type": "status", "phase": "connecting", "error": msg.split("\n")[0]})
+            await asyncio.sleep(10)
+
 # ── EEG loop ──────────────────────────────────────────────────────────────────
 async def eeg_loop():
-    params   = BrainFlowInputParams()
-    board_id = BoardIds.GANGLION_NATIVE_BOARD.value
-    board    = BoardShim(board_id, params)
-
-    print("Connecting to Ganglion...")
-    board.prepare_session()
-    board.start_stream()
+    board, board_id = await _connect_ganglion_with_status()
 
     sr          = BoardShim.get_sampling_rate(board_id)
     eeg_chs     = BoardShim.get_eeg_channels(board_id)
@@ -609,8 +693,7 @@ async def eeg_loop():
     except asyncio.CancelledError:
         pass
     finally:
-        board.stop_stream()
-        board.release_session()
+        _release_board(board)
         print("Board released.")
 
 async def main():

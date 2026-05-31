@@ -9,7 +9,9 @@ import CalibrationSession, { CalStateKey, CAL_SEQUENCE } from "./components/Cali
 import { Task, ChatMessage, BrainwavePowerBands, LiveMetrics, HistoricalFocusData } from "./types";
 import { EEGSimulator } from "./utils/eegSimulator";
 import { EegWebSocketClient, EegPhase } from "./utils/eegWebSocketClient";
+import { EegMockClient } from "./utils/eegMockClient";
 import { getEnergyAdvisory, scoresFromPercent } from "./utils/eegEnergy";
+import { useGeminiLive } from "./hooks/useGeminiLive";
 
 import { Activity, LayoutGrid, Radio, ShieldAlert, ChevronDown, ChevronUp, Sliders, Wind, Zap } from "lucide-react";
 
@@ -68,7 +70,10 @@ const INITIAL_HISTORICAL: HistoricalFocusData[] = [
 export default function App() {
   const [sessionReady, setSessionReady] = useState(false);
   const [serverUnreachable, setServerUnreachable] = useState(false);
+  const [hardwareError, setHardwareError] = useState<string | undefined>();
+  const [hardwareDetail, setHardwareDetail] = useState<string | undefined>();
   const [isSimulated, setIsSimulated] = useState(false);
+  const [isMockGanglion, setIsMockGanglion] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(true);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -120,6 +125,7 @@ export default function App() {
   const ch2Accumulator = useRef<number[]>([]);
   const simulatorRef = useRef<EEGSimulator | null>(null);
   const eegClientRef = useRef<EegWebSocketClient | null>(null);
+  const eegMockClientRef = useRef<EegMockClient | null>(null);
   const wsConnectedRef = useRef(false);
 
   useEffect(() => {
@@ -218,13 +224,18 @@ export default function App() {
   };
 
   const handleEegUpdate = useCallback((update: Partial<import("./utils/eegWebSocketClient").EegLiveUpdate>) => {
-    setServerUnreachable(false);
-    wsConnectedRef.current = true;
+    if (update.serverConnected) {
+      wsConnectedRef.current = true;
+      setServerUnreachable(false);
+    }
+    if (update.hardwareError !== undefined) setHardwareError(update.hardwareError || undefined);
+    if (update.hardwareDetail !== undefined) setHardwareDetail(update.hardwareDetail || undefined);
     if (update.phase) {
       setEegPhase(update.phase);
-      const connected = update.phase !== "connecting";
-      wsConnectedRef.current = connected;
-      setIsConnected(connected);
+      setIsConnected(update.phase !== "connecting");
+      if (update.phase !== "connecting") {
+        setHardwareError(undefined);
+      }
     }
     if (update.calState) {
       setCalState(update.calState as CalStateKey);
@@ -273,12 +284,22 @@ export default function App() {
     }
   }, []);
 
-  const handleConnectGanglion = useCallback(() => {
+  const disconnectEegSources = useCallback(() => {
     eegClientRef.current?.disconnect();
+    eegClientRef.current = null;
+    eegMockClientRef.current?.disconnect();
+    eegMockClientRef.current = null;
+  }, []);
+
+  const handleConnectGanglion = useCallback(() => {
+    disconnectEegSources();
     ch1Accumulator.current = [];
     ch2Accumulator.current = [];
     resetCalState();
     setServerUnreachable(false);
+    setHardwareError(undefined);
+    setHardwareDetail(undefined);
+    setIsMockGanglion(false);
     wsConnectedRef.current = false;
 
     eegClientRef.current = new EegWebSocketClient(
@@ -289,7 +310,23 @@ export default function App() {
     eegClientRef.current.connect();
     setIsSimulated(false);
     setIsStreaming(true);
-  }, [handleEegUpdate]);
+  }, [handleEegUpdate, disconnectEegSources]);
+
+  const handleUseMockGanglion = useCallback(() => {
+    disconnectEegSources();
+    ch1Accumulator.current = [];
+    ch2Accumulator.current = [];
+    resetCalState();
+    setServerUnreachable(false);
+    setIsMockGanglion(true);
+    setIsSimulated(false);
+    setIsStreaming(true);
+    wsConnectedRef.current = true;
+    setIsConnected(true);
+
+    eegMockClientRef.current = new EegMockClient(handleEegUpdate);
+    eegMockClientRef.current.connect();
+  }, [handleEegUpdate, disconnectEegSources]);
 
   // Auto-connect to EEG server on app launch
   useEffect(() => {
@@ -299,15 +336,15 @@ export default function App() {
     }, 10000);
     return () => {
       clearTimeout(timeout);
-      eegClientRef.current?.disconnect();
+      disconnectEegSources();
     };
-  }, [handleConnectGanglion]);
+  }, [handleConnectGanglion, disconnectEegSources]);
 
   const handleDisconnectGanglion = () => {
-    eegClientRef.current?.disconnect();
-    eegClientRef.current = null;
+    disconnectEegSources();
     setIsConnected(false);
     setIsSimulated(true);
+    setIsMockGanglion(false);
     setIsStreaming(true);
     setEegPhase("connecting");
     resetCalState();
@@ -315,9 +352,9 @@ export default function App() {
   };
 
   const handleSkipToSimulator = () => {
-    eegClientRef.current?.disconnect();
-    eegClientRef.current = null;
+    disconnectEegSources();
     setIsSimulated(true);
+    setIsMockGanglion(false);
     setIsConnected(false);
     setIsStreaming(true);
     setSessionReady(true);
@@ -438,6 +475,19 @@ export default function App() {
     setChatHistory((prev) => [...prev, msg]);
   };
 
+  const [jarvisSpeaking, setJarvisSpeaking] = useState(false);
+
+  const geminiLive = useGeminiLive({
+    metrics,
+    bands,
+    tasks,
+    isSimulated,
+    isMockGanglion,
+    mentalState,
+    onAddChatMessage: handleAddChatMessage,
+    onSpeakingChange: setJarvisSpeaking,
+  });
+
   const energyAdvisory = getEnergyAdvisory(
     scoresFromPercent(metrics.focusScore, metrics.relaxScore, metrics.stressScore)
   );
@@ -461,6 +511,9 @@ export default function App() {
         ch2Buffer={ch2Buffer}
         chatHistory={chatHistory}
         serverUnreachable={serverUnreachable}
+        hardwareError={hardwareError}
+        hardwareDetail={hardwareDetail}
+        onUseMockGanglion={handleUseMockGanglion}
         onSkipSimulator={handleSkipToSimulator}
         onEnterApp={handleEnterApp}
       />
@@ -532,14 +585,23 @@ export default function App() {
         {/* Core Layout Grid: Left (Floating Jarvis Skin Terminal) vs Right (Checklists) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           
-          {/* COLUMN A: Cute floating Jarvis companion container (Grid Span: 5) */}
-          <div className="lg:col-span-5 flex flex-col gap-6">
+          {/* COLUMN A: Jarvis — full width during live analysis */}
+          <div
+            className={`flex flex-col gap-6 ${
+              geminiLive.isLiveActive ? "lg:col-span-12" : "lg:col-span-5"
+            }`}
+          >
             <JarvisCompanion
               metrics={metrics}
+              bands={bands}
+              mentalState={mentalState}
               tasks={tasks}
               chatHistory={chatHistory}
               onAddChatMessage={handleAddChatMessage}
               isSimulated={isSimulated}
+              isMockGanglion={isMockGanglion}
+              geminiLive={geminiLive}
+              jarvisSpeaking={jarvisSpeaking}
               onAddTask={handleAddTask}
               onAutoplanTasks={handleAutoplanTasks}
               onToggleComplete={handleToggleComplete}
@@ -548,8 +610,12 @@ export default function App() {
             />
           </div>
 
-          {/* COLUMN B: Task Checklist / Generator Console (Grid Span: 7) */}
-          <div className="lg:col-span-12 xl:col-span-7">
+          {/* COLUMN B: Task Checklist — tucked below during live session */}
+          <div
+            className={`lg:col-span-12 ${
+              geminiLive.isLiveActive ? "xl:col-span-12" : "xl:col-span-7"
+            }`}
+          >
             <TaskManager
               tasks={tasks}
               manaLevel={metrics.manaLevel}
@@ -616,6 +682,10 @@ export default function App() {
             COGNITIVE CORE SYNC STATUS:{" "}
             {isSimulated ? (
               <span className="text-zinc-500 font-semibold font-mono">SIMULATED</span>
+            ) : isMockGanglion ? (
+              <span className="text-cyan-700 font-semibold font-mono">
+                MOCK GANGLION{mentalState ? ` (${mentalState.toUpperCase()})` : ""}
+              </span>
             ) : eegPhase === "connecting" ? (
               <span className="text-amber-600 font-semibold font-mono animate-pulse">CONNECTING TO GANGLION…</span>
             ) : eegPhase === "calibrating" ? (
