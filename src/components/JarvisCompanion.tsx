@@ -1,16 +1,31 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ChatMessage, LiveMetrics, Task } from "../types";
+import { BrainwavePowerBands, ChatMessage, LiveMetrics, Task } from "../types";
+import LiveAnalysisPanel from "./LiveAnalysisPanel";
 import { 
   Volume2, VolumeX, Send, Mic, MicOff, HelpCircle, Sparkles, 
-  Play, CheckCircle2, ChevronRight, RefreshCw, Cpu, Star, Laptop, ArrowRight
+  Play, CheckCircle2, ChevronRight, RefreshCw, Cpu, Star, Laptop, ArrowRight,
+  Radio, Loader2
 } from "lucide-react";
+
+interface GeminiLiveControls {
+  status: LiveSessionStatus;
+  error: string | null;
+  isLiveActive: boolean;
+  toggleLive: () => Promise<void>;
+  sendTextMessage: (text: string) => void;
+}
 
 interface JarvisCompanionProps {
   metrics: LiveMetrics;
+  bands: BrainwavePowerBands;
+  mentalState?: string;
   tasks: Task[];
   chatHistory: ChatMessage[];
   onAddChatMessage: (msg: ChatMessage) => void;
   isSimulated: boolean;
+  isMockGanglion?: boolean;
+  geminiLive: GeminiLiveControls;
+  jarvisSpeaking?: boolean;
   onAddTask: (task: Omit<Task, "id" | "createdAt" | "priority">) => void;
   onAutoplanTasks: () => void;
   onToggleComplete: (id: string) => void;
@@ -39,16 +54,22 @@ const SKIN_PRESETS: SkinPreset[] = [
 
 export default function JarvisCompanion({
   metrics,
+  bands,
+  mentalState,
   tasks,
   chatHistory,
   onAddChatMessage,
   isSimulated,
+  isMockGanglion,
+  geminiLive,
+  jarvisSpeaking = false,
   onAddTask,
   onAutoplanTasks,
   onToggleComplete,
   onDeleteTask,
   onToggleMode,
 }: JarvisCompanionProps) {
+  const { status: liveStatus, error: liveError, isLiveActive, toggleLive, sendTextMessage } = geminiLive;
   const [inputText, setInputText] = useState("");
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -68,17 +89,34 @@ export default function JarvisCompanion({
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const recognitionRef = useRef<any>(null);
+  const [liveChatStartIndex, setLiveChatStartIndex] = useState<number | null>(null);
 
-  // Auto-adapt emotions based on power
   useEffect(() => {
-    if (metrics.stressScore > 55) {
-      setAvatarEmotion("exhausted");
-    } else if (isLoading) {
+    if (liveStatus === "connecting" && liveChatStartIndex === null) {
+      setLiveChatStartIndex(chatHistory.length);
+    }
+    if (!isLiveActive && liveStatus === "idle") {
+      setLiveChatStartIndex(null);
+    }
+  }, [liveStatus, isLiveActive, chatHistory.length, liveChatStartIndex]);
+
+  const liveSessionMessages =
+    liveChatStartIndex !== null ? chatHistory.slice(liveChatStartIndex) : chatHistory;
+
+  // Auto-adapt emotions based on EEG + live voice state
+  useEffect(() => {
+    if (jarvisSpeaking || liveStatus === "speaking") {
+      setAvatarEmotion("speaking");
+    } else if (liveStatus === "connecting" || isLoading) {
       setAvatarEmotion("thinking");
+    } else if (metrics.stressScore > 55) {
+      setAvatarEmotion("exhausted");
+    } else if (isLiveActive && liveStatus === "listening") {
+      setAvatarEmotion("idle");
     } else {
       setAvatarEmotion("idle");
     }
-  }, [metrics.stressScore, isLoading]);
+  }, [metrics.stressScore, isLoading, jarvisSpeaking, liveStatus, isLiveActive]);
 
   // Auto-scroll chat dialogs
   useEffect(() => {
@@ -89,7 +127,7 @@ export default function JarvisCompanion({
 
   // Clean vocalized announcements
   const speakText = (text: string) => {
-    if (!voiceEnabled || !window.speechSynthesis) return;
+    if (isLiveActive || !voiceEnabled || !window.speechSynthesis) return;
     window.speechSynthesis.cancel();
 
     const cleanedText = text
@@ -341,6 +379,19 @@ export default function JarvisCompanion({
   const handleSendMessage = async (textToSend: string) => {
     if (!textToSend.trim() || isLoading) return;
 
+    if (isLiveActive) {
+      const userMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        sender: "user",
+        text: textToSend,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      onAddChatMessage(userMsg);
+      setInputText("");
+      sendTextMessage(textToSend);
+      return;
+    }
+
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
       sender: "user",
@@ -577,26 +628,87 @@ export default function JarvisCompanion({
         </div>
       </div>
 
-      {/* Main floating cute character viewport */}
-      <div className="flex flex-col items-center justify-center py-6 bg-zinc-50/50 rounded-2xl border border-zinc-100 relative">
-        <div className="absolute top-3 left-3">
-          <span className={`text-[8px] font-mono font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border ${currentSkinPreset.accentClass}`}>
-            Skin: {currentSkinPreset.name}
-          </span>
-        </div>
+      {/* Live analysis layout — expanded when voice session is active */}
+      {isLiveActive ? (
+        <>
+          <div className="flex items-center justify-center gap-3 py-3">
+            <div className="scale-75 origin-center">{renderAvatarGraphic()}</div>
+            <div className="text-left">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Jarvis · Live</p>
+              <p className="text-xs text-zinc-600 mt-0.5">
+                {jarvisSpeaking || liveStatus === "speaking"
+                  ? "Analyzing & responding…"
+                  : "EEG + voice linked"}
+              </p>
+            </div>
+          </div>
 
-        {renderAvatarGraphic()}
+          <LiveAnalysisPanel
+            metrics={metrics}
+            bands={bands}
+            mentalState={mentalState}
+            chatMessages={liveSessionMessages}
+            liveStatus={liveStatus}
+            jarvisSpeaking={jarvisSpeaking}
+            isLoading={isLoading}
+          />
 
-        <p className="text-[11px] text-zinc-500 font-mono tracking-wide mt-3 text-center">
-          {metrics.stressScore > 55
-            ? "⚡ Stress elevated — rest recommended."
-            : metrics.relaxScore > 55 && metrics.focusScore < 40
-            ? "🎯 Relaxed — pick a task to focus."
-            : `Hologram active • ${avatarEmotion}`}
-        </p>
-      </div>
+          <button
+            type="button"
+            onClick={() => void toggleLive()}
+            disabled={liveStatus === "connecting"}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 transition-colors"
+          >
+            <Radio className="w-3.5 h-3.5" />
+            End live session
+          </button>
+          {liveError && (
+            <p className="text-[10px] text-rose-600 text-center leading-relaxed">{liveError}</p>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="flex flex-col items-center justify-center py-6 bg-zinc-50/50 rounded-2xl border border-zinc-100 relative">
+            <div className="absolute top-3 left-3">
+              <span className={`text-[8px] font-mono font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border ${currentSkinPreset.accentClass}`}>
+                Skin: {currentSkinPreset.name}
+              </span>
+            </div>
 
-      {/* Compact skin selection panel */}
+            {renderAvatarGraphic()}
+
+            <p className="text-[11px] text-zinc-500 font-mono tracking-wide mt-3 text-center">
+              {metrics.stressScore > 55
+                ? "⚡ Stress elevated — rest recommended."
+                : metrics.relaxScore > 55 && metrics.focusScore < 40
+                ? "🎯 Relaxed — pick a task to focus."
+                : `Hologram active • ${avatarEmotion}`}
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={() => void toggleLive()}
+              disabled={liveStatus === "connecting"}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-xs font-semibold tracking-wide transition-all border bg-zinc-900 border-zinc-900 text-white hover:bg-zinc-800"
+            >
+              {liveStatus === "connecting" ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Radio className="w-4 h-4" />
+              )}
+              Start live voice — talk about your signals
+            </button>
+            {liveError && (
+              <p className="text-[10px] text-rose-600 text-center leading-relaxed">{liveError}</p>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Compact skin selection panel — hidden during live to save space */}
+      {!isLiveActive && (
       <div className="flex flex-col gap-2">
         <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-widest">Select Agent Avatar Skin:</span>
         <div className="flex flex-wrap gap-1.5 justify-center">
@@ -618,17 +730,19 @@ export default function JarvisCompanion({
           ))}
         </div>
       </div>
+      )}
 
       {/* Guide notes */}
-      {showHelp && (
+      {showHelp && !isLiveActive && (
         <div className="bg-zinc-50 border border-zinc-150 rounded-xl p-4 text-[10.5px] text-zinc-600 leading-relaxed z-10 animate-fade-in">
           <p className="text-zinc-900 font-semibold mb-1.5 flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-indigo-500" /> Speech & Dialog Directives:
           </p>
           <ul className="list-disc pl-4 space-y-1">
-            <li>Type <span className="font-semibold text-zinc-800">"Review KiCad Specs"</span> to simulated board-level trace inspections.</li>
-            <li>Use the microphone button below to activate instant command listening.</li>
-            <li>Deduct energy coordinates automatically upon completing work items.</li>
+            <li><span className="font-semibold text-zinc-800">Live voice</span> — Jarvis analyzes your Ganglion signals and speaks back in real time.</li>
+            <li>Try: &quot;How am I feeling?&quot;, &quot;What should I work on?&quot;, &quot;Should I take a break?&quot;</li>
+            <li>Type <span className="font-semibold text-zinc-800">"Review KiCad Specs"</span> for hardware doc simulation.</li>
+            <li>Quick mic (when live is off) uses browser speech-to-text for commands.</li>
           </ul>
         </div>
       )}
@@ -680,7 +794,8 @@ export default function JarvisCompanion({
         </div>
       )}
 
-      {/* Dialogue history in native messages styled layout */}
+      {/* Dialogue history — compact when not in live mode (live uses LiveAnalysisPanel transcript) */}
+      {!isLiveActive && (
       <div className="flex flex-col gap-2 border-t border-zinc-100 pt-5">
         <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-widest">Conversation:</span>
         
@@ -721,6 +836,7 @@ export default function JarvisCompanion({
           )}
         </div>
       </div>
+      )}
 
       {micError && (
         <p className="text-[9px] font-mono text-rose-500 mb-1 text-center">{micError}</p>
@@ -741,17 +857,20 @@ export default function JarvisCompanion({
         )}
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={toggleListening}
-            className={`p-3 rounded-2xl border transition-all cursor-pointer shrink-0 ${
-              listening 
-                ? "bg-rose-50 border-rose-200 text-rose-500 animate-pulse" 
-                : "bg-white border-zinc-200 text-zinc-400 hover:text-zinc-700 hover:bg-zinc-50 shadow-sm"
-            }`}
-            title={listening ? "Listening..." : "Speak command"}
-          >
-            {listening ? <Mic className="w-4 h-4 text-rose-500" /> : <MicOff className="w-4 h-4 text-zinc-400" />}
-          </button>
+          {!isLiveActive && (
+            <button
+              type="button"
+              onClick={toggleListening}
+              className={`p-3 rounded-2xl border transition-all cursor-pointer shrink-0 ${
+                listening 
+                  ? "bg-rose-50 border-rose-200 text-rose-500 animate-pulse" 
+                  : "bg-white border-zinc-200 text-zinc-400 hover:text-zinc-700 hover:bg-zinc-50 shadow-sm"
+              }`}
+              title={listening ? "Listening..." : "Quick voice command"}
+            >
+              {listening ? <Mic className="w-4 h-4 text-rose-500" /> : <MicOff className="w-4 h-4 text-zinc-400" />}
+            </button>
+          )}
 
           <form 
             onSubmit={(e) => {
@@ -764,8 +883,14 @@ export default function JarvisCompanion({
               type="text"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder={listening ? "Listening verbal audio..." : "Type instructions to Jarvis..."}
-              disabled={listening}
+              placeholder={
+                isLiveActive
+                  ? "Type to Jarvis (live session)…"
+                  : listening
+                  ? "Listening verbal audio..."
+                  : "Type instructions to Jarvis..."
+              }
+              disabled={listening && !isLiveActive}
               className="flex-1 bg-transparent text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-0 pr-2 border-none"
             />
             <button
