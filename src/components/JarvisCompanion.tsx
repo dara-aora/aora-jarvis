@@ -23,7 +23,6 @@ interface JarvisCompanionProps {
   chatHistory: ChatMessage[];
   onAddChatMessage: (msg: ChatMessage) => void;
   isSimulated: boolean;
-  isMockGanglion?: boolean;
   geminiLive: GeminiLiveControls;
   jarvisSpeaking?: boolean;
   onAddTask: (task: Omit<Task, "id" | "createdAt" | "priority">) => void;
@@ -60,7 +59,6 @@ export default function JarvisCompanion({
   chatHistory,
   onAddChatMessage,
   isSimulated,
-  isMockGanglion,
   geminiLive,
   jarvisSpeaking = false,
   onAddTask,

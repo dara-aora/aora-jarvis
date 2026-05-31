@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Radio, Wind, Target, Zap, CheckCircle2, Sparkles, ArrowRight, Cpu, FlaskConical } from "lucide-react";
+import { Radio, Wind, Target, Zap, CheckCircle2, Sparkles, ArrowRight, Cpu } from "lucide-react";
 import { ChatMessage } from "../types";
 
 export type CalStateKey = "relaxation" | "concentration" | "stress";
@@ -175,9 +175,6 @@ interface CalibrationSessionProps {
   ch2Buffer: number[];
   chatHistory: ChatMessage[];
   serverUnreachable?: boolean;
-  hardwareError?: string;
-  hardwareDetail?: string;
-  onUseMockGanglion?: () => void;
   onSkipSimulator?: () => void;
   onEnterApp?: () => void;
 }
@@ -193,9 +190,6 @@ export default function CalibrationSession({
   ch2Buffer,
   chatHistory,
   serverUnreachable,
-  hardwareError,
-  hardwareDetail,
-  onUseMockGanglion,
   onSkipSimulator,
   onEnterApp,
 }: CalibrationSessionProps) {
@@ -320,43 +314,16 @@ export default function CalibrationSession({
               <div className="w-14 h-14 border-2 border-zinc-200 border-t-zinc-900 rounded-full animate-spin mx-auto mb-6" />
               <h2 className="text-lg font-semibold text-zinc-800 mb-2">Connecting to Ganglion</h2>
               <p className="text-sm text-zinc-400 leading-relaxed">
-                {hardwareDetail ?? (
-                  <>
-                    Waiting for EEG server at <code className="text-zinc-600 bg-zinc-100 px-1.5 py-0.5 rounded">ws://localhost:8765</code>
-                    <br />Make sure <code className="text-zinc-600">npm run eeg</code> is running with your board powered on.
-                  </>
-                )}
+                Waiting for EEG server at <code className="text-zinc-600 bg-zinc-100 px-1.5 py-0.5 rounded">ws://localhost:8765</code>
+                <br />Make sure <code className="text-zinc-600">npm run eeg</code> is running with your board powered on.
               </p>
-              {hardwareError && (
-                <p className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 mt-4 max-w-md mx-auto leading-relaxed">
-                  {hardwareError}
-                  <span className="block text-xs text-rose-500 mt-1">Retrying automatically…</span>
-                </p>
-              )}
-              <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
-                {onUseMockGanglion && (
-                  <button
-                    type="button"
-                    onClick={onUseMockGanglion}
-                    className="inline-flex items-center gap-2 text-sm font-medium text-cyan-800 bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 px-5 py-2.5 rounded-full transition-colors"
-                  >
-                    <FlaskConical className="w-4 h-4" /> Test with mock Ganglion data
-                  </button>
-                )}
-                {serverUnreachable && onSkipSimulator && (
-                  <button
-                    type="button"
-                    onClick={onSkipSimulator}
-                    className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-800 border border-zinc-200 px-5 py-2.5 rounded-full transition-colors"
-                  >
-                    <Cpu className="w-4 h-4" /> Skip to simulator
-                  </button>
-                )}
-              </div>
-              {onUseMockGanglion && (
-                <p className="text-[10px] text-zinc-400 mt-4 max-w-sm mx-auto leading-relaxed">
-                  Mock mode runs the full calibration flow with synthetic EEG — no board or Python server required.
-                </p>
+              {serverUnreachable && onSkipSimulator && (
+                <button
+                  onClick={onSkipSimulator}
+                  className="mt-8 inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-800 border border-zinc-200 px-5 py-2.5 rounded-full transition-colors"
+                >
+                  <Cpu className="w-4 h-4" /> Continue with simulator
+                </button>
               )}
             </div>
           )}

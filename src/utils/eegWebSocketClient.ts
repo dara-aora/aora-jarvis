@@ -41,8 +41,6 @@ export interface EegDataMessage {
 export interface EegStatusMessage {
   type: "status";
   phase: EegPhase;
-  detail?: string;
-  error?: string;
 }
 
 export interface EegCalPhaseMessage {
@@ -84,9 +82,6 @@ export type EegMessage =
 
 export interface EegLiveUpdate {
   phase: EegPhase;
-  serverConnected?: boolean;
-  hardwareError?: string;
-  hardwareDetail?: string;
   calState?: string;
   calLabel?: string;
   calInstruction?: string;
@@ -198,7 +193,7 @@ export class EegWebSocketClient {
     this.ws = new WebSocket(this.url);
 
     this.ws.onopen = () => {
-      this.onUpdate({ phase: this.phase, serverConnected: true });
+      this.onUpdate({ phase: this.phase });
     };
 
     this.ws.onmessage = (evt) => {
@@ -277,16 +272,12 @@ export class EegWebSocketClient {
 
     if (msg.type === "status") {
       this.phase = msg.phase;
-      const update: Partial<EegLiveUpdate> = {
-        phase: msg.phase,
-        hardwareDetail: msg.detail,
-        hardwareError: msg.error,
-      };
       if (msg.phase === "calibrating") {
         this.calDone = {};
-        update.calDone = {};
+        this.onUpdate({ phase: msg.phase, calDone: {} });
+      } else {
+        this.onUpdate({ phase: msg.phase });
       }
-      this.onUpdate(update);
       return;
     }
 
