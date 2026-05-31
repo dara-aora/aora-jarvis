@@ -1,4 +1,5 @@
 import { BrainwavePowerBands, LiveMetrics } from "../types";
+import { computePlayEnergy } from "./eegEnergy";
 
 export class EEGSimulator {
   private time = 0;
@@ -119,6 +120,13 @@ export class EEGSimulator {
     // Deduce simulated impedance based on jaw clenches or base noise
     const imp: "excellent" | "good" | "poor" = this.jawClenchActive ? "poor" : "excellent";
 
+    const concentration = this.focusLevel / 100;
+    const relaxation = this.relaxLevel / 100;
+    const stress = this.jawClenchActive
+      ? 0.72
+      : Math.max(0, Math.min(1, 0.15 + (1 - concentration) * 0.45 + (relaxation > 0.75 ? 0.05 : 0)));
+    const playEnergy = computePlayEnergy({ relaxation, concentration, stress });
+
     return {
       ch1: parseFloat(ch1Raw.toFixed(2)),
       ch2: parseFloat(ch2Raw.toFixed(2)),
@@ -131,12 +139,13 @@ export class EEGSimulator {
       metrics: {
         focusScore: Math.round(this.focusLevel),
         relaxScore: Math.round(this.relaxLevel),
+        stressScore: Math.round(stress * 100),
         noiseLevel: this.jawClenchActive ? 85 : parseFloat((this.baseNoise + (blinkPotential > 0 ? 15 : 0)).toFixed(1)),
         impedanceCh1: imp,
         impedanceCh2: imp,
         ch1Microvolts: parseFloat(ch1Raw.toFixed(2)),
         ch2Microvolts: parseFloat(ch2Raw.toFixed(2)),
-        manaLevel: Math.round(Math.max(5, 100 - (this.focusLevel * 0.25 + (100 - this.relaxLevel) * 0.3))), // Mock mana calculation
+        manaLevel: playEnergy,
         dominantBand: dominant
       }
     };

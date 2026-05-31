@@ -13,7 +13,6 @@ interface JarvisCompanionProps {
   isSimulated: boolean;
   onAddTask: (task: Omit<Task, "id" | "createdAt" | "priority">) => void;
   onAutoplanTasks: () => void;
-  onReplenishMana: (amount: number) => void;
   onToggleComplete: (id: string) => void;
   onDeleteTask: (id: string) => void;
   onToggleMode: () => void;
@@ -46,7 +45,6 @@ export default function JarvisCompanion({
   isSimulated,
   onAddTask,
   onAutoplanTasks,
-  onReplenishMana,
   onToggleComplete,
   onDeleteTask,
   onToggleMode,
@@ -73,14 +71,14 @@ export default function JarvisCompanion({
 
   // Auto-adapt emotions based on power
   useEffect(() => {
-    if (metrics.manaLevel < 35) {
+    if (metrics.stressScore > 55) {
       setAvatarEmotion("exhausted");
     } else if (isLoading) {
       setAvatarEmotion("thinking");
     } else {
       setAvatarEmotion("idle");
     }
-  }, [metrics.manaLevel, isLoading]);
+  }, [metrics.stressScore, isLoading]);
 
   // Auto-scroll chat dialogs
   useEffect(() => {
@@ -118,7 +116,7 @@ export default function JarvisCompanion({
 
     utterance.onstart = () => setAvatarEmotion("speaking");
     utterance.onend = () => {
-      setAvatarEmotion(metrics.manaLevel < 35 ? "exhausted" : "idle");
+      setAvatarEmotion(metrics.stressScore > 55 ? "exhausted" : "idle");
     };
 
     window.speechSynthesis.speak(utterance);
@@ -166,7 +164,7 @@ export default function JarvisCompanion({
     };
 
     recognitionRef.current = rec;
-  }, [metrics.manaLevel]);
+  }, [metrics.stressScore]);
 
   const toggleListening = () => {
     if (!voiceSupported || !recognitionRef.current) {
@@ -250,8 +248,7 @@ export default function JarvisCompanion({
         });
       }
 
-      // Cost reflects playful physical energy reduction
-      onReplenishMana(-20);
+      // Task completed — play energy is tracked by Ganglion EEG only
 
       const finishSpeech = "Review compiled successfully. I checked your 4-layer power traces in KiCad and written the specification report.";
       
@@ -317,12 +314,6 @@ export default function JarvisCompanion({
       return;
     }
 
-    if (text.includes("replenish") || text.includes("recharge") || text.includes("breath") || text.includes("break")) {
-      onReplenishMana(25);
-      sendCompanionResponse("Sensory focus reset confirmed. Guided breathing expanded your Stamina by 25 points.");
-      return;
-    }
-
     for (const preset of SKIN_PRESETS) {
       if (text.includes(preset.name.toLowerCase()) || text.includes(preset.id)) {
         setCurrentSkin(preset.id);
@@ -371,10 +362,11 @@ export default function JarvisCompanion({
           eegStats: {
             focusScore: metrics.focusScore,
             relaxScore: metrics.relaxScore,
+            stressScore: metrics.stressScore,
             leftEarBand: `${metrics.dominantBand} (Ch1)`,
             rightEarBand: `${metrics.dominantBand} (Ch2)`,
             mana: metrics.manaLevel,
-            state: metrics.manaLevel > 75 ? "Optimal" : metrics.manaLevel > 40 ? "Balanced" : "Low Energy"
+            state: metrics.stressScore > 55 ? "Stressed" : metrics.relaxScore > 55 && metrics.focusScore < 40 ? "Relaxed" : metrics.focusScore > 50 ? "Focused" : "Balanced"
           },
           tasks: tasks,
           chatHistory: chatHistory
@@ -596,9 +588,11 @@ export default function JarvisCompanion({
         {renderAvatarGraphic()}
 
         <p className="text-[11px] text-zinc-500 font-mono tracking-wide mt-3 text-center">
-          {metrics.manaLevel < 35 
-            ? "⚡ Energy is low. Reset with box breath." 
-            : `Hologram active • feeling ${avatarEmotion}`}
+          {metrics.stressScore > 55
+            ? "⚡ Stress elevated — rest recommended."
+            : metrics.relaxScore > 55 && metrics.focusScore < 40
+            ? "🎯 Relaxed — pick a task to focus."
+            : `Hologram active • ${avatarEmotion}`}
         </p>
       </div>
 

@@ -4,6 +4,7 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 
+dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 // Ensure Gemini is initialized correctly with safety checks
@@ -28,7 +29,7 @@ try {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
@@ -122,7 +123,10 @@ ${tasksSummary}
   // Vite Integration for Full-Stack Hot Reloading & Production Static Serving
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: { strictPort: false },
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -134,8 +138,20 @@ ${tasksSummary}
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Jarvis Centralized Intelligence server online on port ${PORT}`);
+  });
+
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `\nPort ${PORT} is already in use. Another dev server is probably already running.\n` +
+          `  → Open http://localhost:${PORT} in your browser, or stop the other process first:\n` +
+          `    lsof -ti :${PORT} | xargs kill\n`
+      );
+      process.exit(1);
+    }
+    throw err;
   });
 }
 

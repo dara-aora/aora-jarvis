@@ -24,8 +24,9 @@ export interface BrainwavePowerBands {
 }
 
 export interface LiveMetrics {
-  focusScore: number;       // calculated dynamically 0-100%
-  relaxScore: number;       // calculated dynamically 0-100%
+  focusScore: number;       // concentration 0-100% from Ganglion
+  relaxScore: number;       // relaxation 0-100% from Ganglion
+  stressScore: number;      // stress 0-100% from Ganglion
   noiseLevel: number;        // muscle artifact EMG level (primarily masseter teeth clench)
   impedanceCh1: "excellent" | "good" | "poor" | "disconnected"; // Ch1 Left temporal contact resistance
   impedanceCh2: "excellent" | "good" | "poor" | "disconnected"; // Ch2 Right temporal contact resistance

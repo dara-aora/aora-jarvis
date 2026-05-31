@@ -1,13 +1,15 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import DashboardHeader from "./components/DashboardHeader";
 import EEGVisualizer from "./components/EEGVisualizer";
 import ManaAdvisor from "./components/ManaAdvisor";
 import TaskManager from "./components/TaskManager";
 import JarvisCompanion from "./components/JarvisCompanion";
+import CalibrationSession, { CalStateKey, CAL_SEQUENCE } from "./components/CalibrationSession";
 
 import { Task, ChatMessage, BrainwavePowerBands, LiveMetrics, HistoricalFocusData } from "./types";
 import { EEGSimulator } from "./utils/eegSimulator";
-import { GanglionConnector } from "./utils/bleConnector";
+import { EegWebSocketClient, EegPhase } from "./utils/eegWebSocketClient";
+import { getEnergyAdvisory, scoresFromPercent } from "./utils/eegEnergy";
 
 import { Activity, LayoutGrid, Radio, ShieldAlert, ChevronDown, ChevronUp, Sliders, Wind, Zap } from "lucide-react";
 
@@ -50,7 +52,7 @@ const INITIAL_CHAT: ChatMessage[] = [
   {
     id: "welcome-1",
     sender: "jarvis",
-    text: "Synaptic channels synchronized, Sir. I am scanning microvolt signals coming from your temporal electrodes. Mental stamina budget is optimized. Please instruct me whenever you are ready to plan your work intervals.",
+    text: "Good day, Sir. Before we begin our collaboration, I need to calibrate your OpenBCI Ganglion electrodes. This takes about two minutes — I'll guide you through three mental states so I can read your brainwaves accurately.",
     timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
   }
 ];
@@ -64,10 +66,23 @@ const INITIAL_HISTORICAL: HistoricalFocusData[] = [
 ];
 
 export default function App() {
-  const [isSimulated, setIsSimulated] = useState(true);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [serverUnreachable, setServerUnreachable] = useState(false);
+  const [isSimulated, setIsSimulated] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(true);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [eegPhase, setEegPhase] = useState<EegPhase>("connecting");
+  const [calState, setCalState] = useState<CalStateKey | undefined>();
+  const [calLabel, setCalLabel] = useState<string | undefined>();
+  const [calInstruction, setCalInstruction] = useState<string | undefined>();
+  const [calProgress, setCalProgress] = useState<number | undefined>();
+  const [calCountdown, setCalCountdown] = useState<number>(0);
+  const [calSamples, setCalSamples] = useState<number>(0);
+  const [calDone, setCalDone] = useState<Partial<Record<CalStateKey, boolean>>>({});
+  const [showCalComplete, setShowCalComplete] = useState(false);
+  const [mentalState, setMentalState] = useState<string | undefined>();
+  const lastCalStateRef = useRef<string | undefined>();
   
   const [ch1Buffer, setCh1Buffer] = useState<number[]>([]);
   const [ch2Buffer, setCh2Buffer] = useState<number[]>([]);
@@ -75,14 +90,16 @@ export default function App() {
   const [metrics, setMetrics] = useState<LiveMetrics>({
     focusScore: 75,
     relaxScore: 50,
+    stressScore: 25,
     noiseLevel: 25,
     impedanceCh1: "excellent",
     impedanceCh2: "excellent",
     ch1Microvolts: 0.0,
     ch2Microvolts: 0.0,
-    manaLevel: 96,
+    manaLevel: 72,
     dominantBand: "Alpha"
   });
+  const lastAdvisoryRef = useRef<string>("");
 
   const [tasks, setTasks] = useState<Task[]>(() => {
     const saved = localStorage.getItem("jarvis_tasks");
@@ -102,7 +119,8 @@ export default function App() {
   const ch1Accumulator = useRef<number[]>([]);
   const ch2Accumulator = useRef<number[]>([]);
   const simulatorRef = useRef<EEGSimulator | null>(null);
-  const connectorRef = useRef<GanglionConnector | null>(null);
+  const eegClientRef = useRef<EegWebSocketClient | null>(null);
+  const wsConnectedRef = useRef(false);
 
   useEffect(() => {
     simulatorRef.current = new EEGSimulator();
@@ -139,17 +157,12 @@ export default function App() {
           if (ch2Accumulator.current.length > 180) ch2Accumulator.current.shift();
 
           setBands(sample.bands);
-          setMetrics((prev) => ({
-            ...sample.metrics,
-            manaLevel: Math.max(5, prev.manaLevel) 
-          }));
-        } else {
-          if (ch1Accumulator.current.length > 180) ch1Accumulator.current.shift();
-          if (ch2Accumulator.current.length > 180) ch2Accumulator.current.shift();
-        }
+          setMetrics(sample.metrics);
 
-        setCh1Buffer([...ch1Accumulator.current]);
-        setCh2Buffer([...ch2Accumulator.current]);
+          setCh1Buffer([...ch1Accumulator.current]);
+          setCh2Buffer([...ch2Accumulator.current]);
+        }
+        // Live Ganglion buffers are driven by WebSocket — do not overwrite here
       }
 
       frameId = requestAnimationFrame(processingStep);
@@ -183,50 +196,168 @@ export default function App() {
     return () => clearInterval(loggerInterval);
   }, [isStreaming, metrics]);
 
-  const handleConnectBLE = async () => {
-    setIsStreaming(false);
+  const speakJarvis = (text: string) => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 0.92;
+    u.pitch = 0.95;
+    window.speechSynthesis.speak(u);
+  };
 
-    try {
-      connectorRef.current = new GanglionConnector(
-        (ch1, ch2, parsedBands) => {
-          ch1Accumulator.current.push(ch1);
-          ch2Accumulator.current.push(ch2);
-          setBands(parsedBands);
-        },
-        (status) => {
-          console.log("[Ganglion BLE Status]:", status);
-        },
-        (err) => {
-          console.error("[Ganglion BLE Error]:", err);
-          alert(err);
-        }
-      );
+  const resetCalState = () => {
+    setCalState(undefined);
+    setCalLabel(undefined);
+    setCalInstruction(undefined);
+    setCalProgress(undefined);
+    setCalCountdown(0);
+    setCalSamples(0);
+    setCalDone({});
+    setShowCalComplete(false);
+    lastCalStateRef.current = undefined;
+  };
 
-      const ok = await connectorRef.current.connect();
-      if (ok) {
-        setIsSimulated(false);
-        setIsConnected(true);
-        await connectorRef.current.startStream();
-        setIsStreaming(true);
-      }
-    } catch (err) {
-      setIsSimulated(true);
-      setIsConnected(false);
-      setIsStreaming(true);
+  const handleEegUpdate = useCallback((update: Partial<import("./utils/eegWebSocketClient").EegLiveUpdate>) => {
+    setServerUnreachable(false);
+    wsConnectedRef.current = true;
+    if (update.phase) {
+      setEegPhase(update.phase);
+      const connected = update.phase !== "connecting";
+      wsConnectedRef.current = connected;
+      setIsConnected(connected);
     }
+    if (update.calState) {
+      setCalState(update.calState as CalStateKey);
+      if (update.calState !== lastCalStateRef.current) {
+        lastCalStateRef.current = update.calState;
+        const step = CAL_SEQUENCE.find((s) => s.key === update.calState);
+        if (step) {
+          speakJarvis(step.jarvisCue);
+          setChatHistory((prev) => [...prev, {
+            id: crypto.randomUUID(),
+            sender: "jarvis",
+            text: `**${step.label} Phase**\n\n${step.jarvisCue}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          }]);
+        }
+      }
+    }
+    if (update.calLabel !== undefined) setCalLabel(update.calLabel);
+    if (update.calInstruction !== undefined) setCalInstruction(update.calInstruction);
+    if (update.calProgress !== undefined) setCalProgress(update.calProgress);
+    if (update.calCountdown !== undefined) setCalCountdown(update.calCountdown);
+    if (update.calSamples !== undefined) setCalSamples(update.calSamples);
+    if (update.calDone) setCalDone(update.calDone);
+    if (update.calComplete) {
+      setShowCalComplete(true);
+      speakJarvis("Calibration complete, Sir. Your neural profile is locked in. Enter the companion when you're ready.");
+      setChatHistory((prev) => [...prev, {
+        id: crypto.randomUUID(),
+        sender: "jarvis",
+        text: "**Calibration complete.** Your personal baselines are set. Click **Enter Companion** to begin our collaboration with live EEG.",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      }]);
+    }
+    if (update.mentalState) setMentalState(update.mentalState);
+    if (update.ch1Buffer?.length) {
+      ch1Accumulator.current = update.ch1Buffer;
+      setCh1Buffer([...update.ch1Buffer]);
+    }
+    if (update.ch2Buffer?.length) {
+      ch2Accumulator.current = update.ch2Buffer;
+      setCh2Buffer([...update.ch2Buffer]);
+    }
+    if (update.bands) setBands(update.bands);
+    if (update.metrics) {
+      setMetrics(update.metrics);
+    }
+  }, []);
+
+  const handleConnectGanglion = useCallback(() => {
+    eegClientRef.current?.disconnect();
+    ch1Accumulator.current = [];
+    ch2Accumulator.current = [];
+    resetCalState();
+    setServerUnreachable(false);
+    wsConnectedRef.current = false;
+
+    eegClientRef.current = new EegWebSocketClient(
+      "ws://localhost:8765",
+      handleEegUpdate,
+      (err) => console.error("[Ganglion EEG]", err)
+    );
+    eegClientRef.current.connect();
+    setIsSimulated(false);
+    setIsStreaming(true);
+  }, [handleEegUpdate]);
+
+  // Auto-connect to EEG server on app launch
+  useEffect(() => {
+    handleConnectGanglion();
+    const timeout = setTimeout(() => {
+      if (!wsConnectedRef.current) setServerUnreachable(true);
+    }, 10000);
+    return () => {
+      clearTimeout(timeout);
+      eegClientRef.current?.disconnect();
+    };
+  }, [handleConnectGanglion]);
+
+  const handleDisconnectGanglion = () => {
+    eegClientRef.current?.disconnect();
+    eegClientRef.current = null;
+    setIsConnected(false);
+    setIsSimulated(true);
+    setIsStreaming(true);
+    setEegPhase("connecting");
+    resetCalState();
+    setMentalState(undefined);
+  };
+
+  const handleSkipToSimulator = () => {
+    eegClientRef.current?.disconnect();
+    eegClientRef.current = null;
+    setIsSimulated(true);
+    setIsConnected(false);
+    setIsStreaming(true);
+    setSessionReady(true);
+    resetCalState();
+  };
+
+  const handleEnterApp = () => {
+    setSessionReady(true);
+    setShowCalComplete(false);
   };
 
   const handleToggleMode = () => {
     if (!isSimulated) {
-      connectorRef.current?.stopStream();
-      connectorRef.current?.disconnect();
-      setIsConnected(false);
-      setIsSimulated(true);
-      setIsStreaming(true);
+      handleDisconnectGanglion();
+      setSessionReady(false);
+      handleConnectGanglion();
     } else {
-      handleConnectBLE();
+      setSessionReady(false);
+      handleConnectGanglion();
     }
   };
+
+  // Jarvis advisory when EEG energy state shifts (stress / relaxed / flow)
+  useEffect(() => {
+    if (!sessionReady || isSimulated) return;
+    const advisory = getEnergyAdvisory(
+      scoresFromPercent(metrics.focusScore, metrics.relaxScore, metrics.stressScore)
+    );
+    if (advisory.type === lastAdvisoryRef.current) return;
+    lastAdvisoryRef.current = advisory.type;
+
+    if (advisory.type === "ok") return;
+
+    setChatHistory((prev) => [...prev, {
+      id: crypto.randomUUID(),
+      sender: "jarvis",
+      text: `**${advisory.title}**\n\n${advisory.message}`,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    }]);
+  }, [metrics.focusScore, metrics.relaxScore, metrics.stressScore, sessionReady, isSimulated]);
 
   const handleTriggerBlink = () => {
     simulatorRef.current?.triggerEyeBlink();
@@ -247,22 +378,9 @@ export default function App() {
   };
 
   const handleToggleComplete = (id: string) => {
-    setTasks((prev) => {
-      return prev.map((t) => {
-        if (t.id === id) {
-          const nextState = !t.completed;
-          if (nextState) {
-            const costFactor = t.category === "Health" ? -12 : t.manaCost;
-            setMetrics((prevMetrics) => ({
-              ...prevMetrics,
-              manaLevel: Math.max(5, Math.min(100, prevMetrics.manaLevel - costFactor))
-            }));
-          }
-          return { ...t, completed: nextState };
-        }
-        return t;
-      });
-    });
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
+    );
   };
 
   const handleDeleteTask = (id: string) => {
@@ -275,10 +393,10 @@ export default function App() {
       const completed = prev.filter((t) => t.completed);
 
       const isHighFocused = metrics.focusScore > 65;
-      const isExhausted = metrics.manaLevel < 35;
+      const isStressed = metrics.stressScore > 55;
 
       const sortedPending = [...pending].sort((a, b) => {
-        if (isExhausted) {
+        if (isStressed) {
           if (a.category === "Health" && b.category !== "Health") return -1;
           if (b.category === "Health" && a.category !== "Health") return 1;
         }
@@ -295,9 +413,11 @@ export default function App() {
       return [...sortedPending, ...completed];
     });
 
-    const planReview = metrics.manaLevel < 35
-      ? "Sir, physical exhaustion is prominent. I reordered health restorations and breather tasks to the immediate front of your objective queue."
-      : "Schedule reordered, Sir. Active focus parameters are optimal. Your deep work coding modules have been promoted to align with this wave cycle phase.";
+    const planReview = metrics.stressScore > 55
+      ? "Sir, elevated stress is showing on your Ganglion. I reordered rest and recovery tasks to the front of your queue."
+      : metrics.relaxScore > 55 && metrics.focusScore < 40
+      ? "You're in a relaxed state, Sir. I've surfaced your focus-required tasks — pick one and concentrate to build momentum."
+      : "Schedule reordered, Sir. Concentration signals are strong. Deep work tasks have been promoted.";
 
     const jarvisMsg: ChatMessage = {
       id: crypto.randomUUID(),
@@ -314,16 +434,38 @@ export default function App() {
     }
   };
 
-  const handleReplenishMana = (amount: number) => {
-    setMetrics((prev) => ({
-      ...prev,
-      manaLevel: Math.min(100, prev.manaLevel + amount)
-    }));
-  };
-
   const handleAddChatMessage = (msg: ChatMessage) => {
     setChatHistory((prev) => [...prev, msg]);
   };
+
+  const energyAdvisory = getEnergyAdvisory(
+    scoresFromPercent(metrics.focusScore, metrics.relaxScore, metrics.stressScore)
+  );
+
+  const onboardingPhase = showCalComplete
+    ? "complete"
+    : eegPhase === "calibrating"
+    ? "calibrating"
+    : "connecting";
+
+  if (!sessionReady) {
+    return (
+      <CalibrationSession
+        phase={onboardingPhase}
+        calState={calState}
+        calProgress={calProgress ?? 0}
+        calCountdown={calCountdown}
+        calSamples={calSamples}
+        calDone={calDone}
+        ch1Buffer={ch1Buffer}
+        ch2Buffer={ch2Buffer}
+        chatHistory={chatHistory}
+        serverUnreachable={serverUnreachable}
+        onSkipSimulator={handleSkipToSimulator}
+        onEnterApp={handleEnterApp}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F5F5F7] text-[#1D1D1F] flex flex-col font-sans selection:bg-zinc-200 selection:text-zinc-900 overflow-x-hidden relative">
@@ -332,6 +474,10 @@ export default function App() {
       <DashboardHeader
         isSimulated={isSimulated}
         isConnected={isConnected}
+        eegPhase={eegPhase}
+        calLabel={calLabel}
+        calProgress={calProgress}
+        mentalState={mentalState}
         onToggleMode={handleToggleMode}
         onTriggerBlink={handleTriggerBlink}
         onTriggerClench={handleTriggerClench}
@@ -341,57 +487,46 @@ export default function App() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-12 flex flex-col gap-10 relative z-10 animate-fade-in">
         
-        {/* Apple-style Battery Capsule Hub */}
-        <div className="bg-white border border-zinc-200/50 p-6 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.03)] flex flex-col sm:flex-row items-center justify-between gap-6 max-w-3xl mx-auto w-full">
-          <div className="flex items-center gap-3">
-            <Zap className="w-5 h-5 text-zinc-900" />
-            <div className="text-left">
-              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest font-sans">Active Reserve Capacity</span>
-              <p className="text-sm font-semibold text-zinc-800 mt-0.5">Play Energy: {metrics.manaLevel} %</p>
+        {/* Play Energy — driven by Ganglion relaxation / concentration / stress */}
+        <div className="bg-white border border-zinc-200/50 p-6 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.03)] flex flex-col gap-5 max-w-3xl mx-auto w-full">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+            <div className="flex items-center gap-3">
+              <Zap className="w-5 h-5 text-zinc-900" />
+              <div className="text-left">
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest font-sans">Play Energy</span>
+                <p className="text-sm font-semibold text-zinc-800 mt-0.5">{metrics.manaLevel}% · {energyAdvisory.badge}</p>
+              </div>
             </div>
-          </div>
 
-          {/* iOS Battery display */}
-          <div className="flex items-center gap-4 w-full sm:w-auto">
-            {/* Battery capsule body */}
             <div className="relative flex-1 sm:flex-initial w-full sm:w-56 h-8 bg-zinc-100 rounded-3xl border border-zinc-200 p-1 overflow-hidden">
-              <div 
+              <div
                 className={`h-full rounded-2xl transition-all duration-500 ease-out ${
-                  metrics.manaLevel > 70 
-                    ? "bg-zinc-900" 
-                    : metrics.manaLevel > 35 
-                    ? "bg-zinc-650" 
-                    : "bg-rose-500 animate-pulse"
+                  metrics.manaLevel > 70 ? "bg-zinc-900" : metrics.manaLevel > 40 ? "bg-zinc-500" : "bg-rose-500 animate-pulse"
                 }`}
                 style={{ width: `${metrics.manaLevel}%` }}
               />
               <div className="absolute inset-0 flex items-center justify-center font-sans text-[10.5px] font-bold text-zinc-550 select-none">
-                {metrics.manaLevel}% EP Remaining
+                {metrics.manaLevel}%
               </div>
             </div>
-            
-            {/* Quick guided breather breath rest */}
-            <button
-              onClick={() => {
-                handleReplenishMana(25);
-                const breathingResponse = "Box-breath pattern verified, Sir. Airway expansion is complete. Replenished your Play Energy by 25 points.";
-                const chatG: ChatMessage = {
-                  id: crypto.randomUUID(),
-                  sender: "jarvis",
-                  text: `💨 **Box Breathing Balanced**\n\nI monitored your temporal alpha rhythms during the 4-second loop. System stamina expanded successfully! *(+25 Stamina EP)*`,
-                  timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-                };
-                setChatHistory((p) => [...p, chatG]);
-                if (window.speechSynthesis) {
-                  window.speechSynthesis.cancel();
-                  window.speechSynthesis.speak(new SpeechSynthesisUtterance(breathingResponse));
-                }
-              }}
-              className="bg-zinc-50 hover:bg-zinc-100 border border-zinc-250 text-zinc-800 px-4 py-1.5 rounded-full font-medium text-[10.5px] tracking-wide transition-all cursor-pointer whitespace-nowrap shadow-sm"
-            >
-              Breath +25 EP
-            </button>
           </div>
+
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-3">
+              <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-wider">Relax</p>
+              <p className="text-lg font-bold text-emerald-800 mt-1">{metrics.relaxScore}%</p>
+            </div>
+            <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3">
+              <p className="text-[9px] font-bold text-blue-600 uppercase tracking-wider">Focus</p>
+              <p className="text-lg font-bold text-blue-800 mt-1">{metrics.focusScore}%</p>
+            </div>
+            <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3">
+              <p className="text-[9px] font-bold text-rose-600 uppercase tracking-wider">Stress</p>
+              <p className="text-lg font-bold text-rose-800 mt-1">{metrics.stressScore}%</p>
+            </div>
+          </div>
+
+          <p className="text-xs text-zinc-500 leading-relaxed text-center italic">"{energyAdvisory.message}"</p>
         </div>
 
         {/* Core Layout Grid: Left (Floating Jarvis Skin Terminal) vs Right (Checklists) */}
@@ -407,7 +542,6 @@ export default function App() {
               isSimulated={isSimulated}
               onAddTask={handleAddTask}
               onAutoplanTasks={handleAutoplanTasks}
-              onReplenishMana={handleReplenishMana}
               onToggleComplete={handleToggleComplete}
               onDeleteTask={handleDeleteTask}
               onToggleMode={handleToggleMode}
@@ -458,7 +592,7 @@ export default function App() {
                   bands={bands}
                   metrics={metrics}
                   isStreaming={isStreaming}
-                  onConnectBLE={handleConnectBLE}
+                  onConnectBLE={handleConnectGanglion}
                   isSimulated={isSimulated}
                   onTriggerBlink={handleTriggerBlink}
                 />
@@ -469,7 +603,7 @@ export default function App() {
                   manaLevel={metrics.manaLevel}
                   focusScore={metrics.focusScore}
                   relaxScore={metrics.relaxScore}
-                  onReplenishMana={handleReplenishMana}
+                  stressScore={metrics.stressScore}
                 />
               </section>
             </div>
@@ -478,7 +612,20 @@ export default function App() {
 
         {/* Minimal Footnote Status bar */}
         <footer className="border-t border-zinc-200 mt-2 pt-5 flex flex-col sm:flex-row items-center justify-between text-[10px] text-zinc-400 gap-3 font-sans font-medium">
-          <span>COGNITIVE CORE SYNC STATUS: <span className="text-emerald-600 font-semibold font-mono">ONLINE (BLE SYNCED)</span></span>
+          <span>
+            COGNITIVE CORE SYNC STATUS:{" "}
+            {isSimulated ? (
+              <span className="text-zinc-500 font-semibold font-mono">SIMULATED</span>
+            ) : eegPhase === "connecting" ? (
+              <span className="text-amber-600 font-semibold font-mono animate-pulse">CONNECTING TO GANGLION…</span>
+            ) : eegPhase === "calibrating" ? (
+              <span className="text-amber-600 font-semibold font-mono">CALIBRATING ({calLabel ?? "…"})</span>
+            ) : (
+              <span className="text-emerald-600 font-semibold font-mono">
+                LIVE — GANGLION{mentalState ? ` (${mentalState.toUpperCase()})` : ""}
+              </span>
+            )}
+          </span>
           <span>AORA COMPANION v6.0 • DESIGNED FOR ZEN</span>
         </footer>
 
