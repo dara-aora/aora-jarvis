@@ -21,6 +21,7 @@ import websockets
 from scipy.signal import welch, iirnotch, sosfilt, butter, lfilter
 
 from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
+from brainflow.exit_codes import BrainFlowError
 from fatigue import fatigue_features, FatigueIndex, check_signal_quality
 
 WINDOW_SEC   = 4.0
@@ -82,6 +83,9 @@ def clean(sig, sr):
     return x
 
 # ── Welch PSD ─────────────────────────────────────────────────────────────────
+# numpy 2.4+ removed np.trapz
+_trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+
 def psd_bands(sig, sr):
     nperseg = min(len(sig), int(sr * 2))
     f, p    = welch(sig, fs=sr, nperseg=nperseg, noverlap=nperseg//2,
@@ -89,9 +93,9 @@ def psd_bands(sig, sr):
     out = {}
     for name, (lo, hi) in BANDS.items():
         idx = (f >= lo) & (f <= hi)
-        out[name] = float(np.trapz(p[idx], f[idx])) if idx.any() else 1e-9
+        out[name] = float(_trapz(p[idx], f[idx])) if idx.any() else 1e-9
     # Spectral edge frequency (95%) — rises under cognitive load
-    total_p = np.trapz(p, f) + 1e-9
+    total_p = _trapz(p, f) + 1e-9
     cum     = np.cumsum(p * np.gradient(f))
     sef_idx = np.searchsorted(cum / cum[-1], 0.95)
     out['sef95'] = float(f[min(sef_idx, len(f)-1)])
@@ -471,15 +475,46 @@ async def calibrate(board, sr, ch1_idx, ch2_idx, win_samples):
     await broadcast({"type": "cal_complete"})
     return cal
 
+def _release_board(board: BoardShim) -> None:
+    try:
+        if board.is_prepared():
+            board.stop_stream()
+            board.release_session()
+    except Exception:
+        pass
+
+async def connect_board(max_attempts: int = 5) -> BoardShim:
+    """macOS BLE often connects before GATT chars are ready — retry until streaming."""
+    board_id = BoardIds.GANGLION_NATIVE_BOARD.value
+    params = BrainFlowInputParams()
+    params.timeout = 10
+    last_err: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        board = BoardShim(board_id, params)
+        try:
+            print(f"Connecting to Ganglion (attempt {attempt}/{max_attempts})…")
+            board.prepare_session()
+            if not board.is_prepared():
+                raise BrainFlowError("Ganglion connected but BLE session not ready", 15)
+            board.start_stream()
+            print("Ganglion streaming.")
+            return board
+        except BrainFlowError as err:
+            last_err = err
+            print(f"[WARN] Attempt {attempt} failed: {err}")
+            _release_board(board)
+            if attempt < max_attempts:
+                print("[INFO] Retrying in 5s…")
+                await asyncio.sleep(5)
+
+    raise last_err or BrainFlowError("unable to connect to Ganglion", 15)
+
 # ── EEG loop ──────────────────────────────────────────────────────────────────
 async def eeg_loop():
-    params   = BrainFlowInputParams()
-    board_id = BoardIds.GANGLION_NATIVE_BOARD.value
-    board    = BoardShim(board_id, params)
+    board = await connect_board()
 
-    print("Connecting to Ganglion...")
-    board.prepare_session()
-    board.start_stream()
+    board_id = BoardIds.GANGLION_NATIVE_BOARD.value
 
     sr          = BoardShim.get_sampling_rate(board_id)
     eeg_chs     = BoardShim.get_eeg_channels(board_id)
@@ -609,8 +644,7 @@ async def eeg_loop():
     except asyncio.CancelledError:
         pass
     finally:
-        board.stop_stream()
-        board.release_session()
+        _release_board(board)
         print("Board released.")
 
 async def main():

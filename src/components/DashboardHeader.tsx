@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Cpu, Radio, Eye } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
+import { Cpu, Radio, Eye, ListTodo } from "lucide-react";
 import { EegPhase } from "../utils/eegWebSocketClient";
 
 interface DashboardHeaderProps {
@@ -40,6 +41,7 @@ export default function DashboardHeader({
   impedanceCh1,
   impedanceCh2,
 }: DashboardHeaderProps) {
+  const location = useLocation();
   const [timeStr, setTimeStr] = useState("");
   const [isClenched, setIsClenched] = useState(false);
 
@@ -98,6 +100,18 @@ export default function DashboardHeader({
       </div>
 
       <div className="flex items-center gap-2">
+        <Link
+          to="/tasks"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-semibold border transition-colors ${
+            location.pathname === "/tasks"
+              ? "bg-zinc-900 border-zinc-900 text-white"
+              : "bg-white border-zinc-200 text-zinc-700 hover:bg-zinc-50"
+          }`}
+        >
+          <ListTodo className="w-3 h-3" />
+          <span>Task Agent</span>
+        </Link>
+
         {isSimulated && (
           <div className="flex items-center gap-1.5 bg-zinc-50 border border-zinc-200/50 p-1.5 rounded-full">
             <button

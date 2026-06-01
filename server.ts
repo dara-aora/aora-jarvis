@@ -24,7 +24,7 @@ try {
       }
     });
   } else {
-    console.warn("GEMINI_API_KEY is not defined. Jarvis AI suggestions will run on backup simulated guidance.");
+    console.warn("GEMINI_API_KEY is not defined. Astra AI suggestions will run on backup simulated guidance.");
   }
 } catch (err) {
   console.error("Error initializing GoogleGenAI client:", err);
@@ -108,7 +108,7 @@ async function startServer() {
       // Local dev: direct key (never expose in production builds)
       if (process.env.NODE_ENV !== "production") {
         console.warn(
-          "[Jarvis Live] Using API key fallback — configure ephemeral tokens for production."
+          "[Astra Live] Using API key fallback — configure ephemeral tokens for production."
         );
         return res.json({ token: apiKey, model: JARVIS_LIVE_MODEL, ephemeral: false });
       }
@@ -118,12 +118,12 @@ async function startServer() {
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Live token error";
-      console.error("[Jarvis Live] token error:", error);
+      console.error("[Astra Live] token error:", error);
       res.status(500).json({ error: message });
     }
   });
 
-  // Jarvis Cognitive Reasoning Endpoint
+  // Astra cognitive reasoning endpoint
   app.post("/api/jarvis/chat", async (req, res) => {
     try {
       const { message, eegStats, tasks, chatHistory } = req.body;
@@ -142,7 +142,7 @@ async function startServer() {
         });
       }
 
-      // Format task state to provide full context to Jarvis
+      // Format task state to provide full context to Astra
       const tasksSummary = Array.isArray(tasks) 
         ? tasks.map((t: any) => `- [${t.completed ? 'COMPLETED' : 'PENDING'}] ${t.title} (Est. Mana cost: ${t.manaCost} pts, Focus req: ${t.focusRequired})`).join("\n")
         : "No active task queue loaded.";
@@ -153,7 +153,7 @@ async function startServer() {
         : "Electrodes disconnected or initializing.";
 
       const systemInstruction = 
-        `You are J.A.R.V.I.S., the user's elite cybernetic neural health assistant and cognitive supervisor. 
+        `You are Astra, the user's elite cybernetic neural health assistant and cognitive supervisor. 
         The app is running on a beautiful futuristic dashboard visualizing live EEG data from an OpenBCI Ganglion board (2 behind-the-ear channels, 1 earlobe ground reference).
         Your speaking tone is exceptionally polite, analytical, elegant, slightly British, and deeply supportive of their cognitive wellbeing. You call the user 'Sir' or 'Ma'am' (or just keep it refined and respectful).
         
@@ -200,8 +200,8 @@ ${tasksSummary}
 
       res.json({ response: response.text });
     } catch (error: any) {
-      console.error("Jarvis backend query error:", error);
-      res.status(500).json({ error: "Failed to communicate with the Jarvis system core.", raw: error?.message });
+      console.error("Astra backend query error:", error);
+      res.status(500).json({ error: "Failed to communicate with the Astra system core.", raw: error?.message });
     }
   });
 
@@ -224,7 +224,7 @@ ${tasksSummary}
   }
 
   const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Jarvis Centralized Intelligence server online on port ${PORT}`);
+    console.log(`Astra intelligence server online on port ${PORT}`);
   });
 
   server.on("error", (err: NodeJS.ErrnoException) => {

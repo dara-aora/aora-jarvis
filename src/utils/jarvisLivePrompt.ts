@@ -30,7 +30,7 @@ export function buildJarvisLiveSystemInstruction(
 
   const signalSource = describeEegSignalSource(isSimulated, isMockGanglion);
 
-  return `You are J.A.R.V.I.S., the user's elite neural health assistant and cognitive supervisor for the Aora Companion dashboard.
+  return `You are Astra, the user's elite neural health assistant and cognitive supervisor for the Aora Companion dashboard.
 
 You receive continuous live EEG telemetry from ${signalSource} — two temporal channels measuring brainwave activity (delta, theta, alpha, beta) plus derived focus, relaxation, stress, and "mana" (mental energy / play energy 0–100).
 
@@ -92,7 +92,7 @@ export function buildSessionStartContext(
   tasks: Task[],
   mentalState?: string
 ): string {
-  return `[SESSION START] User opened live voice with Jarvis. ${buildEegContextMessage(metrics, bands, tasks, mentalState)}
+  return `[SESSION START] User opened live voice with Astra. ${buildEegContextMessage(metrics, bands, tasks, mentalState)}
 
 Briefly greet them, describe how their brain signals suggest they feel right now, and recommend one concrete action for the next few minutes.`;
 }

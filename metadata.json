@@ -1,6 +1,6 @@
 {
-  "name": "Jarvis EEG Assistant",
-  "description": "A real-time EEG brainwave visualizer and Jarvis cognitive management cockpit designed for OpenBCI Ganglion, featuring focus telemetry and mental energy tracking.",
+  "name": "Astra EEG Assistant",
+  "description": "A real-time EEG brainwave visualizer and Astra cognitive management cockpit designed for OpenBCI Ganglion, featuring focus telemetry and mental energy tracking.",
   "requestFramePermissions": ["camera", "microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

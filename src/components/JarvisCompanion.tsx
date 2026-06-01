@@ -23,8 +23,9 @@ interface JarvisCompanionProps {
   chatHistory: ChatMessage[];
   onAddChatMessage: (msg: ChatMessage) => void;
   isSimulated: boolean;
+  isMockGanglion?: boolean;
   geminiLive: GeminiLiveControls;
-  jarvisSpeaking?: boolean;
+  astraSpeaking?: boolean;
   onAddTask: (task: Omit<Task, "id" | "createdAt" | "priority">) => void;
   onAutoplanTasks: () => void;
   onToggleComplete: (id: string) => void;
@@ -59,8 +60,9 @@ export default function JarvisCompanion({
   chatHistory,
   onAddChatMessage,
   isSimulated,
+  isMockGanglion,
   geminiLive,
-  jarvisSpeaking = false,
+  astraSpeaking = false,
   onAddTask,
   onAutoplanTasks,
   onToggleComplete,
@@ -103,7 +105,7 @@ export default function JarvisCompanion({
 
   // Auto-adapt emotions based on EEG + live voice state
   useEffect(() => {
-    if (jarvisSpeaking || liveStatus === "speaking") {
+    if (astraSpeaking || liveStatus === "speaking") {
       setAvatarEmotion("speaking");
     } else if (liveStatus === "connecting" || isLoading) {
       setAvatarEmotion("thinking");
@@ -114,7 +116,7 @@ export default function JarvisCompanion({
     } else {
       setAvatarEmotion("idle");
     }
-  }, [metrics.stressScore, isLoading, jarvisSpeaking, liveStatus, isLiveActive]);
+  }, [metrics.stressScore, isLoading, astraSpeaking, liveStatus, isLiveActive]);
 
   // Auto-scroll chat dialogs
   useEffect(() => {
@@ -206,7 +208,7 @@ export default function JarvisCompanion({
     if (!voiceSupported || !recognitionRef.current) {
       const msg: ChatMessage = {
         id: crypto.randomUUID(),
-        sender: "jarvis",
+        sender: "astra",
         text: "My mic module is locked by your browser settings. Please type into the command line below, and I will execute immediately.",
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
@@ -288,14 +290,14 @@ export default function JarvisCompanion({
 
       const finishSpeech = "Review compiled successfully. I checked your 4-layer power traces in KiCad and written the specification report.";
       
-      const jarvisMsg: ChatMessage = {
+      const astraMsg: ChatMessage = {
         id: crypto.randomUUID(),
-        sender: "jarvis",
+        sender: "astra",
         text: `📊 **Aora Nano KiCad Audit Complete**\n\nI reviewed the copper layers and created your hardware documentation:\n\n* **Shielding:** Bypass filters are certified layout-adjacent.\n* **Power Loop:** Realigned 0.15uV pins perfectly.\n* **Result:** Document written successfully to output repo. *(Used 20 Energy points)*`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
-      onAddChatMessage(jarvisMsg);
+      onAddChatMessage(astraMsg);
       speakText(finishSpeech);
     }, 4500);
   };
@@ -364,7 +366,7 @@ export default function JarvisCompanion({
   const sendCompanionResponse = (replyText: string) => {
     const msg: ChatMessage = {
       id: crypto.randomUUID(),
-      sender: "jarvis",
+      sender: "astra",
       text: replyText,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
@@ -426,7 +428,7 @@ export default function JarvisCompanion({
       if (response.ok && data.response) {
         const jMsg: ChatMessage = {
           id: crypto.randomUUID(),
-          sender: "jarvis",
+          sender: "astra",
           text: data.response,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         };
@@ -440,7 +442,7 @@ export default function JarvisCompanion({
       const standardResponse = "Temporal flow balanced. Let's focus on completing your upcoming Aora hardware checklist items.";
       const jMsg: ChatMessage = {
         id: crypto.randomUUID(),
-        sender: "jarvis",
+        sender: "astra",
         text: standardResponse,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
@@ -632,9 +634,9 @@ export default function JarvisCompanion({
           <div className="flex items-center justify-center gap-3 py-3">
             <div className="scale-75 origin-center">{renderAvatarGraphic()}</div>
             <div className="text-left">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Jarvis · Live</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Astra · Live</p>
               <p className="text-xs text-zinc-600 mt-0.5">
-                {jarvisSpeaking || liveStatus === "speaking"
+                {astraSpeaking || liveStatus === "speaking"
                   ? "Analyzing & responding…"
                   : "EEG + voice linked"}
               </p>
@@ -647,7 +649,7 @@ export default function JarvisCompanion({
             mentalState={mentalState}
             chatMessages={liveSessionMessages}
             liveStatus={liveStatus}
-            jarvisSpeaking={jarvisSpeaking}
+            astraSpeaking={astraSpeaking}
             isLoading={isLoading}
           />
 
@@ -737,7 +739,7 @@ export default function JarvisCompanion({
             <Sparkles className="w-3.5 h-3.5 text-indigo-500" /> Speech & Dialog Directives:
           </p>
           <ul className="list-disc pl-4 space-y-1">
-            <li><span className="font-semibold text-zinc-800">Live voice</span> — Jarvis analyzes your Ganglion signals and speaks back in real time.</li>
+            <li><span className="font-semibold text-zinc-800">Live voice</span> — Astra analyzes your Ganglion signals and speaks back in real time.</li>
             <li>Try: &quot;How am I feeling?&quot;, &quot;What should I work on?&quot;, &quot;Should I take a break?&quot;</li>
             <li>Type <span className="font-semibold text-zinc-800">"Review KiCad Specs"</span> for hardware doc simulation.</li>
             <li>Quick mic (when live is off) uses browser speech-to-text for commands.</li>
@@ -809,7 +811,7 @@ export default function JarvisCompanion({
               }`}
             >
               <span className="text-[7.5px] font-mono text-zinc-400 uppercase tracking-wide">
-                {msg.sender === "user" ? "Dara (You)" : "J.A.R.V.I.S."} • {msg.timestamp}
+                {msg.sender === "user" ? "Dara (You)" : "Astra"} • {msg.timestamp}
               </span>
 
               <div className={`p-3 rounded-2xl text-xs leading-relaxed ${
@@ -824,7 +826,7 @@ export default function JarvisCompanion({
 
           {isLoading && (
             <div className="self-start flex flex-col gap-0.5">
-              <span className="text-[8px] font-mono text-zinc-400 animate-pulse">Syncing Jarvis Brain...</span>
+              <span className="text-[8px] font-mono text-zinc-400 animate-pulse">Syncing Astra…</span>
               <div className="bg-white border border-zinc-200 px-3 py-2 rounded-2xl rounded-tl-none flex items-center gap-1">
                 <span className="w-1.5 h-1.5 bg-zinc-450 rounded-full animate-bounce" />
                 <span className="w-1.5 h-1.5 bg-zinc-450 rounded-full animate-bounce [animation-delay:0.15s]" />
@@ -883,10 +885,10 @@ export default function JarvisCompanion({
               onChange={(e) => setInputText(e.target.value)}
               placeholder={
                 isLiveActive
-                  ? "Type to Jarvis (live session)…"
+                  ? "Type to Astra (live session)…"
                   : listening
                   ? "Listening verbal audio..."
-                  : "Type instructions to Jarvis..."
+                  : "Type instructions to Astra..."
               }
               disabled={listening && !isLiveActive}
               className="flex-1 bg-transparent text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-0 pr-2 border-none"

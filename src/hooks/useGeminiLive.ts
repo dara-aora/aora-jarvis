@@ -69,7 +69,7 @@ export function useGeminiLive({
   }, [metrics, bands, tasks, isSimulated, isMockGanglion, mentalState]);
 
   const pushTranscript = useCallback(
-    (sender: "user" | "jarvis", text: string) => {
+    (sender: "user" | "astra", text: string) => {
       if (!text.trim()) return;
       onAddChatMessage({
         id: crypto.randomUUID(),
@@ -222,7 +222,7 @@ export function useGeminiLive({
             const outputText = message.serverContent?.outputTranscription?.text;
             if (outputText && outputText !== lastOutputTranscriptRef.current) {
               lastOutputTranscriptRef.current = outputText;
-              pushTranscript("jarvis", outputText);
+              pushTranscript("astra", outputText);
             }
 
             const parts = message.serverContent?.modelTurn?.parts;
@@ -294,7 +294,7 @@ export function useGeminiLive({
 
       onAddChatMessage({
         id: crypto.randomUUID(),
-        sender: "jarvis",
+        sender: "astra",
         text: "🎧 **Live voice channel open.** I can hear you now, Sir — speak whenever you're ready. I'm monitoring your EEG telemetry in the background.",
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       });

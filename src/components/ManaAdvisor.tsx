@@ -83,7 +83,7 @@ export default function ManaAdvisor({
       <div className="bg-white border border-zinc-200/50 p-6 md:p-8 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.03)] flex flex-col gap-6 animate-fade-in">
         <div className="flex items-center gap-2 border-b border-zinc-150 pb-3">
           <Activity className="w-4 h-4 text-zinc-900" />
-          <h2 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest font-sans">Jarvis Advisory</h2>
+          <h2 className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest font-sans">Astra Advisory</h2>
         </div>
 
         <div className={`p-5 rounded-2xl border flex flex-col gap-2 ${badgeColor}`}>

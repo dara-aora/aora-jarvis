@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Radio, Wind, Target, Zap, CheckCircle2, Sparkles, ArrowRight, Cpu } from "lucide-react";
+import { Radio, Wind, Target, Zap, CheckCircle2, Sparkles, ArrowRight, Cpu, FlaskConical } from "lucide-react";
 import { ChatMessage } from "../types";
 
 export type CalStateKey = "relaxation" | "concentration" | "stress";
@@ -11,7 +11,7 @@ export interface CalStep {
   visual: string;
   visualLabel: string;
   instruction: string;
-  jarvisCue: string;
+  astraCue: string;
   breatheIn: number;
   breatheOut: number;
   color: string;
@@ -29,7 +29,7 @@ export const CAL_SEQUENCE: CalStep[] = [
     visual: "🌿",
     visualLabel: "Forest · Ocean · Peace",
     instruction: "Close your eyes · breathe slowly · clear your mind completely",
-    jarvisCue: "Sir, let's begin with relaxation. Close your eyes and breathe with the rhythm. I am mapping your alpha wave baseline.",
+    astraCue: "Sir, let's begin with relaxation. Close your eyes and breathe with the rhythm. I am mapping your alpha wave baseline.",
     breatheIn: 4,
     breatheOut: 6,
     color: "#059669",
@@ -45,7 +45,7 @@ export const CAL_SEQUENCE: CalStep[] = [
     visual: "🔢",
     visualLabel: "Numbers · Logic · Precision",
     instruction: "Eyes open · solve 300 − 7 − 7 − 7… keep going · stay locked in",
-    jarvisCue: "Excellent. Now focus intently — mental arithmetic, eyes open. I am recording your beta concentration signature.",
+    astraCue: "Excellent. Now focus intently — mental arithmetic, eyes open. I am recording your beta concentration signature.",
     breatheIn: 4,
     breatheOut: 4,
     color: "#2563eb",
@@ -61,7 +61,7 @@ export const CAL_SEQUENCE: CalStep[] = [
     visual: "⏱",
     visualLabel: "Deadline · Urgency · Tension",
     instruction: "Feel a real deadline · heart racing · pressure building now",
-    jarvisCue: "Final phase — invoke genuine pressure. Imagine a deadline approaching. One more minute and your profile is complete.",
+    astraCue: "Final phase — invoke genuine pressure. Imagine a deadline approaching. One more minute and your profile is complete.",
     breatheIn: 2,
     breatheOut: 2,
     color: "#e11d48",
@@ -111,7 +111,7 @@ function BreathPacer({ inSec, outSec, color, active }: { inSec: number; outSec: 
   );
 }
 
-function JarvisOrb({ color, speaking }: { color: string; speaking: boolean }) {
+function AstraOrb({ color, speaking }: { color: string; speaking: boolean }) {
   return (
     <div className={`w-36 h-36 mx-auto transition-all duration-500 ${speaking ? "animate-pulse" : "animate-float"}`}>
       <svg viewBox="0 0 100 100" className="w-full h-full">
@@ -175,8 +175,13 @@ interface CalibrationSessionProps {
   ch2Buffer: number[];
   chatHistory: ChatMessage[];
   serverUnreachable?: boolean;
+  hardwareError?: string;
+  hardwareDetail?: string;
+  onUseMockGanglion?: () => void;
   onSkipSimulator?: () => void;
   onEnterApp?: () => void;
+  /** Recording length per calibration step (default 40s for hardware server). */
+  calStepDurationSec?: number;
 }
 
 export default function CalibrationSession({
@@ -190,8 +195,12 @@ export default function CalibrationSession({
   ch2Buffer,
   chatHistory,
   serverUnreachable,
+  hardwareError,
+  hardwareDetail,
+  onUseMockGanglion,
   onSkipSimulator,
   onEnterApp,
+  calStepDurationSec = 40,
 }: CalibrationSessionProps) {
   const current = CAL_SEQUENCE.find((s) => s.key === calState);
   const completedCount = CAL_SEQUENCE.filter((s) => calDone[s.key]).length;
@@ -211,7 +220,7 @@ export default function CalibrationSession({
   }, [calState, calCountdown, calProgress, phase]);
 
   const showCountdown = localCountdown > 0 && calProgress === 0;
-  const recentJarvis = [...chatHistory].reverse().find((m) => m.sender === "jarvis");
+  const recentAstra = [...chatHistory].reverse().find((m) => m.sender === "astra" || (m.sender as string) === "jarvis");
   const accentColor = current?.color ?? "#059669";
 
   if (phase === "complete") {
@@ -221,7 +230,7 @@ export default function CalibrationSession({
           <CheckCircle2 className="w-20 h-20 text-emerald-500 mx-auto mb-6" />
           <h1 className="text-2xl font-bold text-zinc-900 mb-2">Neural Profile Locked In</h1>
           <p className="text-sm text-zinc-500 mb-8 leading-relaxed">
-            Your relaxation, focus, and stress baselines are calibrated. Jarvis is ready to collaborate with live EEG data from your Ganglion.
+            Your relaxation, focus, and stress baselines are calibrated. Astra is ready to collaborate with live EEG data from your Ganglion.
           </p>
           <button
             onClick={onEnterApp}
@@ -259,18 +268,18 @@ export default function CalibrationSession({
       </header>
 
       <main className="flex-1 max-w-6xl w-full mx-auto p-6 md:p-10 grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-        {/* Jarvis collaboration panel */}
+        {/* Astra collaboration panel */}
         <div className="bg-white rounded-3xl border border-zinc-200/60 shadow-sm p-8 flex flex-col gap-6">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-cyan-600" />
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Jarvis · Neural Guide</span>
+            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Astra · Neural Guide</span>
           </div>
 
           <div
             className="rounded-2xl p-6 transition-all duration-500"
             style={{ backgroundColor: current?.glowColor ?? "rgba(6,182,212,0.08)" }}
           >
-            <JarvisOrb color={accentColor} speaking={phase === "calibrating" && isRecording} />
+            <AstraOrb color={accentColor} speaking={phase === "calibrating" && isRecording} />
             <p className="text-center text-[10px] font-bold uppercase tracking-widest mt-2" style={{ color: accentColor }}>
               {phase === "connecting" ? "Establishing Link" : current?.label ?? "Stand By"}
             </p>
@@ -280,7 +289,7 @@ export default function CalibrationSession({
             <p className="text-sm text-zinc-700 leading-relaxed">
               {phase === "connecting"
                 ? "Good day, Sir. I am connecting to your OpenBCI Ganglion electrodes. Once linked, we'll run a brief 2-minute calibration so I can read your brainwaves accurately."
-                : recentJarvis?.text.replace(/\*\*/g, "") ?? current?.jarvisCue ?? "Follow the prompts on the right."}
+                : recentAstra?.text.replace(/\*\*/g, "") ?? current?.astraCue ?? "Follow the prompts on the right."}
             </p>
           </div>
 
@@ -314,16 +323,43 @@ export default function CalibrationSession({
               <div className="w-14 h-14 border-2 border-zinc-200 border-t-zinc-900 rounded-full animate-spin mx-auto mb-6" />
               <h2 className="text-lg font-semibold text-zinc-800 mb-2">Connecting to Ganglion</h2>
               <p className="text-sm text-zinc-400 leading-relaxed">
-                Waiting for EEG server at <code className="text-zinc-600 bg-zinc-100 px-1.5 py-0.5 rounded">ws://localhost:8765</code>
-                <br />Make sure <code className="text-zinc-600">npm run eeg</code> is running with your board powered on.
+                {hardwareDetail ?? (
+                  <>
+                    Waiting for EEG server at <code className="text-zinc-600 bg-zinc-100 px-1.5 py-0.5 rounded">ws://localhost:8765</code>
+                    <br />Make sure <code className="text-zinc-600">npm run eeg</code> is running with your board powered on.
+                  </>
+                )}
               </p>
-              {serverUnreachable && onSkipSimulator && (
-                <button
-                  onClick={onSkipSimulator}
-                  className="mt-8 inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-800 border border-zinc-200 px-5 py-2.5 rounded-full transition-colors"
-                >
-                  <Cpu className="w-4 h-4" /> Continue with simulator
-                </button>
+              {hardwareError && (
+                <p className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 mt-4 max-w-md mx-auto leading-relaxed">
+                  {hardwareError}
+                  <span className="block text-xs text-rose-500 mt-1">Retrying automatically…</span>
+                </p>
+              )}
+              <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
+                {onUseMockGanglion && (
+                  <button
+                    type="button"
+                    onClick={onUseMockGanglion}
+                    className="inline-flex items-center gap-2 text-sm font-medium text-cyan-800 bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 px-5 py-2.5 rounded-full transition-colors"
+                  >
+                    <FlaskConical className="w-4 h-4" /> Run test one
+                  </button>
+                )}
+                {serverUnreachable && onSkipSimulator && (
+                  <button
+                    type="button"
+                    onClick={onSkipSimulator}
+                    className="inline-flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-800 border border-zinc-200 px-5 py-2.5 rounded-full transition-colors"
+                  >
+                    <Cpu className="w-4 h-4" /> Skip to simulator
+                  </button>
+                )}
+              </div>
+              {onUseMockGanglion && (
+                <p className="text-[10px] text-zinc-400 mt-4 max-w-sm mx-auto leading-relaxed">
+                  Runs the full calibration flow with synthetic EEG — no board or Python server required.
+                </p>
               )}
             </div>
           )}
@@ -366,7 +402,7 @@ export default function CalibrationSession({
                     </div>
                     <div className="flex justify-between text-[10px] text-zinc-500 font-medium">
                       <span>{calSamples} neural samples</span>
-                      <span>{Math.round(calProgress * 40)}s / 40s</span>
+                      <span>{Math.round(calProgress * calStepDurationSec)}s / {calStepDurationSec}s</span>
                     </div>
                   </div>
                 </div>

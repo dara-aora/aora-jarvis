@@ -149,7 +149,7 @@ export default function TaskManager({
             title="Auto-reallocate upcoming queue item sequences automatically"
           >
             <BrainCircuit className="w-3.5 h-3.5 text-zinc-500" />
-            <span>Jarvis Autoplan</span>
+            <span>Astra Autoplan</span>
           </button>
         </div>
 
@@ -191,7 +191,18 @@ export default function TaskManager({
                         <span>•</span>
                         <span>Attention Level: <strong className="text-zinc-600 font-medium">{task.focusRequired}</strong></span>
                         <span>•</span>
-                        <span>Cost: <strong className="text-zinc-700 font-semibold font-mono">{task.manaCost} EP</strong></span>
+                        <span>
+                          {task.energySpent != null ? (
+                            <>
+                              Used: <strong className="text-zinc-900 font-semibold font-mono">{task.energySpent}</strong>
+                              <span className="text-zinc-300"> / est. {task.manaCost}</span>
+                            </>
+                          ) : (
+                            <>
+                              Est: <strong className="text-zinc-700 font-semibold font-mono">{task.manaCost} EP</strong>
+                            </>
+                          )}
+                        </span>
                       </div>
                     </div>
                   </div>

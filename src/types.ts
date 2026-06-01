@@ -1,17 +1,28 @@
+export interface TaskEnergySnapshot {
+  focus: number;
+  relax: number;
+  stress: number;
+  mana: number;
+}
+
 export interface Task {
   id: string;
   title: string;
   completed: boolean;
   priority: "low" | "medium" | "high";
-  manaCost: number; // 0 to 100 representing depletion impact
+  manaCost: number; // 0 to 100 estimated depletion
   category: "Coding" | "Review" | "Health" | "Creative" | "Admin";
   focusRequired: "low" | "medium" | "high";
   createdAt: string;
+  /** Measured neural energy when task was completed (Ganglion). */
+  energySpent?: number;
+  completedAt?: string;
+  energyAtCompletion?: TaskEnergySnapshot;
 }
 
 export interface ChatMessage {
   id: string;
-  sender: "user" | "jarvis";
+  sender: "user" | "astra";
   text: string;
   timestamp: string;
 }

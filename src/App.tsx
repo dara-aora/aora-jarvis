@@ -1,58 +1,33 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Routes, Route } from "react-router-dom";
 import DashboardHeader from "./components/DashboardHeader";
 import EEGVisualizer from "./components/EEGVisualizer";
 import ManaAdvisor from "./components/ManaAdvisor";
 import TaskManager from "./components/TaskManager";
 import JarvisCompanion from "./components/JarvisCompanion";
 import CalibrationSession, { CalStateKey, CAL_SEQUENCE } from "./components/CalibrationSession";
+import TaskAgentPage from "./pages/TaskAgentPage";
 
 import { Task, ChatMessage, BrainwavePowerBands, LiveMetrics, HistoricalFocusData } from "./types";
 import { EEGSimulator } from "./utils/eegSimulator";
 import { EegWebSocketClient, EegPhase } from "./utils/eegWebSocketClient";
+import { EegMockClient, MOCK_CAL_DURATION_SEC } from "./utils/eegMockClient";
 import { getEnergyAdvisory, scoresFromPercent } from "./utils/eegEnergy";
+import { computeTaskEnergySpent } from "./utils/taskEnergy";
+import {
+  applyFullMockEnergyDataset,
+  ensureMockEnergyDemo,
+  getInitialTasksWithMockEnergy,
+} from "./data/mockTaskEnergy";
 import { useGeminiLive } from "./hooks/useGeminiLive";
 
-import { Activity, LayoutGrid, Radio, ShieldAlert, ChevronDown, ChevronUp, Sliders, Wind, Zap } from "lucide-react";
+import { ChevronDown, ChevronUp, Sliders, Zap } from "lucide-react";
 
-// Default starter tasks for initial cockpit loading
-const INITIAL_TASKS: Task[] = [
-  {
-    id: "task-1",
-    title: "Complete hardware compliance spec drafts about Aora Nano's internal routing schema",
-    completed: false,
-    priority: "high",
-    manaCost: 20,
-    category: "Review",
-    focusRequired: "high",
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "task-2",
-    title: "Verify contact impedance behind left temporal earlobe relative to GND pins",
-    completed: true,
-    priority: "medium",
-    manaCost: 15,
-    category: "Health",
-    focusRequired: "low",
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "task-3",
-    title: "Conduct 4-4-4 diaphragmatic breathing neural reset to restore battery power",
-    completed: false,
-    priority: "low",
-    manaCost: 10,
-    category: "Health",
-    focusRequired: "low",
-    createdAt: new Date().toISOString(),
-  }
-];
-
-// Default welcome greeting from Jarvis
+// Default welcome greeting from Astra
 const INITIAL_CHAT: ChatMessage[] = [
   {
     id: "welcome-1",
-    sender: "jarvis",
+    sender: "astra",
     text: "Good day, Sir. Before we begin our collaboration, I need to calibrate your OpenBCI Ganglion electrodes. This takes about two minutes — I'll guide you through three mental states so I can read your brainwaves accurately.",
     timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
   }
@@ -69,7 +44,10 @@ const INITIAL_HISTORICAL: HistoricalFocusData[] = [
 export default function App() {
   const [sessionReady, setSessionReady] = useState(false);
   const [serverUnreachable, setServerUnreachable] = useState(false);
+  const [hardwareError, setHardwareError] = useState<string | undefined>();
+  const [hardwareDetail, setHardwareDetail] = useState<string | undefined>();
   const [isSimulated, setIsSimulated] = useState(false);
+  const [isMockGanglion, setIsMockGanglion] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(true);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -103,17 +81,22 @@ export default function App() {
   const lastAdvisoryRef = useRef<string>("");
 
   const [tasks, setTasks] = useState<Task[]>(() => {
-    const saved = localStorage.getItem("jarvis_tasks");
-    return saved ? JSON.parse(saved) : INITIAL_TASKS;
+    const saved = localStorage.getItem("astra_tasks") ?? localStorage.getItem("jarvis_tasks");
+    if (saved) return ensureMockEnergyDemo(JSON.parse(saved));
+    return getInitialTasksWithMockEnergy();
   });
 
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>(() => {
-    const saved = localStorage.getItem("jarvis_chat");
-    return saved ? JSON.parse(saved) : INITIAL_CHAT;
+    const saved = localStorage.getItem("astra_chat") ?? localStorage.getItem("jarvis_chat");
+    if (!saved) return INITIAL_CHAT;
+    const parsed: ChatMessage[] = JSON.parse(saved);
+    return parsed.map((m) =>
+      (m.sender as string) === "jarvis" ? { ...m, sender: "astra" as const } : m
+    );
   });
 
   const [historicalFocus, setHistoricalFocus] = useState<HistoricalFocusData[]>(() => {
-    const saved = localStorage.getItem("jarvis_historical");
+    const saved = localStorage.getItem("astra_historical") ?? localStorage.getItem("jarvis_historical");
     return saved ? JSON.parse(saved) : INITIAL_HISTORICAL;
   });
 
@@ -121,6 +104,7 @@ export default function App() {
   const ch2Accumulator = useRef<number[]>([]);
   const simulatorRef = useRef<EEGSimulator | null>(null);
   const eegClientRef = useRef<EegWebSocketClient | null>(null);
+  const eegMockClientRef = useRef<EegMockClient | null>(null);
   const wsConnectedRef = useRef(false);
 
   useEffect(() => {
@@ -128,15 +112,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("jarvis_tasks", JSON.stringify(tasks));
+    localStorage.setItem("astra_tasks", JSON.stringify(tasks));
   }, [tasks]);
 
   useEffect(() => {
-    localStorage.setItem("jarvis_chat", JSON.stringify(chatHistory));
+    localStorage.setItem("astra_chat", JSON.stringify(chatHistory));
   }, [chatHistory]);
 
   useEffect(() => {
-    localStorage.setItem("jarvis_historical", JSON.stringify(historicalFocus));
+    localStorage.setItem("astra_historical", JSON.stringify(historicalFocus));
   }, [historicalFocus]);
 
   // Real-time wave telemetry simulation
@@ -197,7 +181,7 @@ export default function App() {
     return () => clearInterval(loggerInterval);
   }, [isStreaming, metrics]);
 
-  const speakJarvis = (text: string) => {
+  const speakAstra = (text: string) => {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
@@ -221,11 +205,16 @@ export default function App() {
   const handleEegUpdate = useCallback((update: Partial<import("./utils/eegWebSocketClient").EegLiveUpdate>) => {
     setServerUnreachable(false);
     wsConnectedRef.current = true;
+    if (update.hardwareError !== undefined) setHardwareError(update.hardwareError || undefined);
+    if (update.hardwareDetail !== undefined) setHardwareDetail(update.hardwareDetail || undefined);
     if (update.phase) {
       setEegPhase(update.phase);
       const connected = update.phase !== "connecting";
       wsConnectedRef.current = connected;
       setIsConnected(connected);
+      if (update.phase !== "connecting") {
+        setHardwareError(undefined);
+      }
     }
     if (update.calState) {
       setCalState(update.calState as CalStateKey);
@@ -233,11 +222,11 @@ export default function App() {
         lastCalStateRef.current = update.calState;
         const step = CAL_SEQUENCE.find((s) => s.key === update.calState);
         if (step) {
-          speakJarvis(step.jarvisCue);
+          speakAstra(step.astraCue);
           setChatHistory((prev) => [...prev, {
             id: crypto.randomUUID(),
-            sender: "jarvis",
-            text: `**${step.label} Phase**\n\n${step.jarvisCue}`,
+            sender: "astra",
+            text: `**${step.label} Phase**\n\n${step.astraCue}`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           }]);
         }
@@ -251,10 +240,10 @@ export default function App() {
     if (update.calDone) setCalDone(update.calDone);
     if (update.calComplete) {
       setShowCalComplete(true);
-      speakJarvis("Calibration complete, Sir. Your neural profile is locked in. Enter the companion when you're ready.");
+      speakAstra("Calibration complete, Sir. Your neural profile is locked in. Enter the companion when you're ready.");
       setChatHistory((prev) => [...prev, {
         id: crypto.randomUUID(),
-        sender: "jarvis",
+        sender: "astra",
         text: "**Calibration complete.** Your personal baselines are set. Click **Enter Companion** to begin our collaboration with live EEG.",
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       }]);
@@ -274,12 +263,22 @@ export default function App() {
     }
   }, []);
 
-  const handleConnectGanglion = useCallback(() => {
+  const disconnectEegSources = useCallback(() => {
     eegClientRef.current?.disconnect();
+    eegClientRef.current = null;
+    eegMockClientRef.current?.disconnect();
+    eegMockClientRef.current = null;
+  }, []);
+
+  const handleConnectGanglion = useCallback(() => {
+    disconnectEegSources();
     ch1Accumulator.current = [];
     ch2Accumulator.current = [];
     resetCalState();
     setServerUnreachable(false);
+    setHardwareError(undefined);
+    setHardwareDetail(undefined);
+    setIsMockGanglion(false);
     wsConnectedRef.current = false;
 
     eegClientRef.current = new EegWebSocketClient(
@@ -290,7 +289,23 @@ export default function App() {
     eegClientRef.current.connect();
     setIsSimulated(false);
     setIsStreaming(true);
-  }, [handleEegUpdate]);
+  }, [handleEegUpdate, disconnectEegSources]);
+
+  const handleUseMockGanglion = useCallback(() => {
+    disconnectEegSources();
+    ch1Accumulator.current = [];
+    ch2Accumulator.current = [];
+    resetCalState();
+    setServerUnreachable(false);
+    setIsMockGanglion(true);
+    setIsSimulated(false);
+    setIsStreaming(true);
+    wsConnectedRef.current = true;
+    setIsConnected(true);
+
+    eegMockClientRef.current = new EegMockClient(handleEegUpdate);
+    eegMockClientRef.current.connect();
+  }, [handleEegUpdate, disconnectEegSources]);
 
   // Auto-connect to EEG server on app launch
   useEffect(() => {
@@ -305,10 +320,10 @@ export default function App() {
   }, [handleConnectGanglion]);
 
   const handleDisconnectGanglion = () => {
-    eegClientRef.current?.disconnect();
-    eegClientRef.current = null;
+    disconnectEegSources();
     setIsConnected(false);
     setIsSimulated(true);
+    setIsMockGanglion(false);
     setIsStreaming(true);
     setEegPhase("connecting");
     resetCalState();
@@ -316,9 +331,9 @@ export default function App() {
   };
 
   const handleSkipToSimulator = () => {
-    eegClientRef.current?.disconnect();
-    eegClientRef.current = null;
+    disconnectEegSources();
     setIsSimulated(true);
+    setIsMockGanglion(false);
     setIsConnected(false);
     setIsStreaming(true);
     setSessionReady(true);
@@ -341,7 +356,7 @@ export default function App() {
     }
   };
 
-  // Jarvis advisory when EEG energy state shifts (stress / relaxed / flow)
+  // Astra advisory when EEG energy state shifts (stress / relaxed / flow)
   useEffect(() => {
     if (!sessionReady || isSimulated) return;
     const advisory = getEnergyAdvisory(
@@ -354,7 +369,7 @@ export default function App() {
 
     setChatHistory((prev) => [...prev, {
       id: crypto.randomUUID(),
-      sender: "jarvis",
+      sender: "astra",
       text: `**${advisory.title}**\n\n${advisory.message}`,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     }]);
@@ -380,12 +395,39 @@ export default function App() {
 
   const handleToggleComplete = (id: string) => {
     setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
+      prev.map((t) => {
+        if (t.id !== id) return t;
+        if (!t.completed) {
+          return {
+            ...t,
+            completed: true,
+            completedAt: new Date().toISOString(),
+            energySpent: computeTaskEnergySpent(metrics, t.manaCost),
+            energyAtCompletion: {
+              focus: metrics.focusScore,
+              relax: metrics.relaxScore,
+              stress: metrics.stressScore,
+              mana: metrics.manaLevel,
+            },
+          };
+        }
+        return {
+          ...t,
+          completed: false,
+          completedAt: undefined,
+          energySpent: undefined,
+          energyAtCompletion: undefined,
+        };
+      })
     );
   };
 
   const handleDeleteTask = (id: string) => {
     setTasks((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  const handleLoadMockEnergy = () => {
+    setTasks((prev) => applyFullMockEnergyDataset(prev));
   };
 
   const handleAutoplanTasks = () => {
@@ -420,14 +462,14 @@ export default function App() {
       ? "You're in a relaxed state, Sir. I've surfaced your focus-required tasks — pick one and concentrate to build momentum."
       : "Schedule reordered, Sir. Concentration signals are strong. Deep work tasks have been promoted.";
 
-    const jarvisMsg: ChatMessage = {
+    const astraMsg: ChatMessage = {
       id: crypto.randomUUID(),
-      sender: "jarvis",
+      sender: "astra",
       text: planReview,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
-    setChatHistory((prev) => [...prev, jarvisMsg]);
+    setChatHistory((prev) => [...prev, astraMsg]);
     
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
@@ -439,16 +481,17 @@ export default function App() {
     setChatHistory((prev) => [...prev, msg]);
   };
 
-  const [jarvisSpeaking, setJarvisSpeaking] = useState(false);
+  const [astraSpeaking, setAstraSpeaking] = useState(false);
 
   const geminiLive = useGeminiLive({
     metrics,
     bands,
     tasks,
     isSimulated,
+    isMockGanglion,
     mentalState,
     onAddChatMessage: handleAddChatMessage,
-    onSpeakingChange: setJarvisSpeaking,
+    onSpeakingChange: setAstraSpeaking,
   });
 
   const energyAdvisory = getEnergyAdvisory(
@@ -474,16 +517,18 @@ export default function App() {
         ch2Buffer={ch2Buffer}
         chatHistory={chatHistory}
         serverUnreachable={serverUnreachable}
+        hardwareError={hardwareError}
+        hardwareDetail={hardwareDetail}
+        onUseMockGanglion={handleUseMockGanglion}
         onSkipSimulator={handleSkipToSimulator}
         onEnterApp={handleEnterApp}
+        calStepDurationSec={isMockGanglion ? MOCK_CAL_DURATION_SEC : 40}
       />
     );
   }
 
-  return (
-    <div className="min-h-screen bg-[#F5F5F7] text-[#1D1D1F] flex flex-col font-sans selection:bg-zinc-200 selection:text-zinc-900 overflow-x-hidden relative">
-      
-      {/* Prime Top Navigation bar styled like Apple header */}
+  const cockpit = (
+    <>
       <DashboardHeader
         isSimulated={isSimulated}
         isConnected={isConnected}
@@ -559,8 +604,9 @@ export default function App() {
               chatHistory={chatHistory}
               onAddChatMessage={handleAddChatMessage}
               isSimulated={isSimulated}
+              isMockGanglion={isMockGanglion}
               geminiLive={geminiLive}
-              jarvisSpeaking={jarvisSpeaking}
+              astraSpeaking={astraSpeaking}
               onAddTask={handleAddTask}
               onAutoplanTasks={handleAutoplanTasks}
               onToggleComplete={handleToggleComplete}
@@ -641,6 +687,10 @@ export default function App() {
             COGNITIVE CORE SYNC STATUS:{" "}
             {isSimulated ? (
               <span className="text-zinc-500 font-semibold font-mono">SIMULATED</span>
+            ) : isMockGanglion ? (
+              <span className="text-cyan-700 font-semibold font-mono">
+                MOCK GANGLION{mentalState ? ` (${mentalState.toUpperCase()})` : ""}
+              </span>
             ) : eegPhase === "connecting" ? (
               <span className="text-amber-600 font-semibold font-mono animate-pulse">CONNECTING TO GANGLION…</span>
             ) : eegPhase === "calibrating" ? (
@@ -655,6 +705,29 @@ export default function App() {
         </footer>
 
       </main>
+    </>
+  );
+
+  return (
+    <div className="min-h-screen bg-[#F5F5F7] text-[#1D1D1F] flex flex-col font-sans selection:bg-zinc-200 selection:text-zinc-900 overflow-x-hidden relative">
+      <Routes>
+        <Route path="/" element={cockpit} />
+        <Route
+          path="/tasks"
+          element={
+            <TaskAgentPage
+              tasks={tasks}
+              metrics={metrics}
+              isSimulated={isSimulated}
+              onAddTask={handleAddTask}
+              onToggleComplete={handleToggleComplete}
+              onDeleteTask={handleDeleteTask}
+              onAutoplanTasks={handleAutoplanTasks}
+              onLoadMockEnergy={handleLoadMockEnergy}
+            />
+          }
+        />
+      </Routes>
     </div>
   );
 }
